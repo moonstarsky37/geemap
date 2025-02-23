@@ -1,5 +1,11 @@
-"""Module for commonly used colormaps and palettes for visualizing Earth Engine data.
-"""
+"""Module for commonly used colormaps and palettes for visualizing Earth Engine data."""
+
+# *******************************************************************************#
+# This module contains extra features of the geemap package.                     #
+# The geemap community will maintain the extra features.                         #
+# *******************************************************************************#
+
+
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
@@ -48,6 +54,19 @@ _palette_dict = {
         "#A59B8F",
         "#B39FE1",
     ],
+    "esri_lulc": [
+        "#1A5BAB",
+        "#358221",
+        "#000000",
+        "#87D19E",
+        "#FFDB5C",
+        "#000000",
+        "#ED022A",
+        "#EDE9E4",
+        "#F2FAFF",
+        "#C8C8C8",
+        "#C6AD8D",
+    ],
 }
 
 
@@ -63,13 +82,19 @@ def get_palette(cmap_name=None, n_class=None, hashtag=False):
         list: A list of hex colors.
     """
 
-    if cmap_name in ["dem", "ndvi", "ndwi"]:
+    if cmap_name in ["ndvi", "ndwi", "dem", "dw", "esri_lulc"]:
         colors = _palette_dict[cmap_name]
     else:
-        cmap = plt.cm.get_cmap(cmap_name, n_class)
-        colors = [mpl.colors.rgb2hex(cmap(i))[1:] for i in range(cmap.N)]
+        cmap = mpl.colormaps[cmap_name]  # Retrieve colormap
+        if n_class:
+            colors = [
+                mpl.colors.rgb2hex(cmap(i / (n_class - 1)))[1:] for i in range(n_class)
+            ]
+        else:
+            colors = [mpl.colors.rgb2hex(cmap(i))[1:] for i in range(cmap.N)]
     if hashtag:
         colors = ["#" + i for i in colors]
+
     return colors
 
 
@@ -153,7 +178,7 @@ def plot_colormap(
         return_fig (bool, optional): Whether to return the figure. Defaults to False.
     """
     fig, ax = plt.subplots(figsize=(width, height))
-    col_map = plt.get_cmap(cmap)
+    col_map = mpl.colormaps[cmap]
 
     norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
 
@@ -189,7 +214,7 @@ def plot_colormaps(width=8.0, height=0.4):
     gradient = np.vstack((gradient, gradient))
 
     for ax, name in zip(axes, cmap_list):
-        ax.imshow(gradient, aspect="auto", cmap=plt.get_cmap(name))
+        ax.imshow(gradient, aspect="auto", cmap=mpl.colormaps[name])
         ax.set_axis_off()
         pos = list(ax.get_position().bounds)
         x_text = pos[0] - 0.01

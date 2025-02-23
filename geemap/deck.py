@@ -1,8 +1,17 @@
+""" "Module for interacting with deck.gl in Python."""
+
+# *******************************************************************************#
+# This module contains extra features of the geemap package.                     #
+# The geemap community will maintain the extra features.                         #
+# *******************************************************************************#
+
 import os
+
 from .common import *
 from .osm import *
 from .geemap import basemaps
 from . import examples
+from typing import Optional
 
 try:
     import pydeck as pdk
@@ -75,10 +84,11 @@ class Map(pdk.Deck):
 
         Args:
             layer (pydeck.Layer): A pydeck Layer object.
+            layer_name (str, optional): Sets the layer 'id' for the pydeck Layer object.
+            **kwargs (Any): Additional keyword arguments for the pydeck Layer object.
         """
 
         try:
-
             if isinstance(layer, str) and layer.startswith("http"):
                 pdk.settings.custom_libraries = [
                     {
@@ -86,23 +96,20 @@ class Map(pdk.Deck):
                         "resourceUri": "https://cdn.jsdelivr.net/gh/giswqs/pydeck_myTileLayer@master/dist/bundle.js",
                     }
                 ]
-                layer = pdk.Layer("MyTileLayer", layer, id=layer_name)
+                layer = pdk.Layer("MyTileLayer", layer, id=layer_name, **kwargs)
 
             self.layers.append(layer)
         except Exception as e:
             raise Exception(e)
 
-    def add_ee_layer(
-        self, ee_object, vis_params={}, name=None, shown=True, opacity=1.0, **kwargs
-    ):
+    def add_ee_layer(self, ee_object, vis_params={}, name=None, **kwargs):
         """Adds a given EE object to the map as a layer.
 
         Args:
             ee_object (Collection|Feature|Image|MapId): The object to add to the map.
             vis_params (dict, optional): The visualization parameters. Defaults to {}.
             name (str, optional): The name of the layer. Defaults to 'Layer N'.
-            shown (bool, optional): A flag indicating whether the layer should be on by default. Defaults to True.
-            opacity (float, optional): The layer's opacity represented as a number between 0 and 1. Defaults to 1.
+            **kwargs (Any): Additional keyword arguments for the pydeck Layer object.
         """
         import ee
         from box import Box
@@ -156,12 +163,21 @@ class Map(pdk.Deck):
         elif isinstance(ee_object, ee.imagecollection.ImageCollection):
             image = ee_object.mosaic()
 
-        if "palette" in vis_params and isinstance(vis_params["palette"], Box):
-            try:
-                vis_params["palette"] = vis_params["palette"]["default"]
-            except Exception as e:
-                print("The provided palette is invalid.")
-                raise Exception(e)
+        if "palette" in vis_params:
+            if isinstance(vis_params["palette"], tuple):
+                vis_params["palette"] = list(vis_params["palette"])
+            if isinstance(vis_params["palette"], Box):
+                try:
+                    vis_params["palette"] = vis_params["palette"]["default"]
+                except Exception as e:
+                    print("The provided palette is invalid.")
+                    raise Exception(e)
+            elif isinstance(vis_params["palette"], str):
+                vis_params["palette"] = check_cmap(vis_params["palette"])
+            elif not isinstance(vis_params["palette"], list):
+                raise ValueError(
+                    "The palette must be a list of colors or a string or a Box object."
+                )
 
         map_id_dict = ee.Image(image).getMapId(vis_params)
         url = map_id_dict["tile_fetcher"].url_format
@@ -169,7 +185,7 @@ class Map(pdk.Deck):
 
     addLayer = add_ee_layer
 
-    def add_basemap(self, basemap="HYBRID"):
+    def add_basemap(self, basemap: str = "HYBRID") -> None:
         """Adds a basemap to the map.
 
         Args:
@@ -184,7 +200,6 @@ class Map(pdk.Deck):
                 self.add_layer(url, name)
 
             elif basemap in basemaps:
-
                 pdk.settings.custom_libraries = [
                     {
                         "libraryName": "MyTileLayerLibrary",
@@ -209,7 +224,13 @@ class Map(pdk.Deck):
                 )
             )
 
-    def add_gdf(self, gdf, layer_name=None, random_color_column=None, **kwargs):
+    def add_gdf(
+        self,
+        gdf,
+        layer_name: Optional[str] = None,
+        random_color_column: Optional[str] = None,
+        **kwargs,
+    ) -> None:
         """Adds a GeoPandas GeoDataFrame to the map.
 
         Args:
@@ -273,7 +294,13 @@ class Map(pdk.Deck):
         except Exception as e:
             raise Exception(e)
 
-    def add_vector(self, filename, layer_name=None, random_color_column=None, **kwargs):
+    def add_vector(
+        self,
+        filename: str,
+        layer_name: Optional[str] = None,
+        random_color_column: Optional[str] = None,
+        **kwargs,
+    ) -> None:
         """Adds a vector file to the map.
 
         Args:
@@ -286,7 +313,6 @@ class Map(pdk.Deck):
         """
 
         try:
-
             import geopandas as gpd
 
             if not filename.startswith("http"):
@@ -306,8 +332,12 @@ class Map(pdk.Deck):
             raise Exception(e)
 
     def add_geojson(
-        self, filename, layer_name=None, random_color_column=None, **kwargs
-    ):
+        self,
+        filename: str,
+        layer_name: Optional[str] = None,
+        random_color_column: Optional[str] = None,
+        **kwargs,
+    ) -> None:
         """Adds a GeoJSON file to the map.
 
         Args:
@@ -320,7 +350,13 @@ class Map(pdk.Deck):
         """
         self.add_vector(filename, layer_name, random_color_column, **kwargs)
 
-    def add_shp(self, filename, layer_name=None, random_color_column=None, **kwargs):
+    def add_shp(
+        self,
+        filename: str,
+        layer_name: Optional[str] = None,
+        random_color_column: Optional[str] = None,
+        **kwargs,
+    ) -> None:
         """Adds a shapefile to the map.
 
         Args:
@@ -333,7 +369,13 @@ class Map(pdk.Deck):
         """
         self.add_vector(filename, layer_name, random_color_column, **kwargs)
 
-    def add_kml(self, filename, layer_name=None, random_color_column=None, **kwargs):
+    def add_kml(
+        self,
+        filename: str,
+        layer_name: Optional[str] = None,
+        random_color_column: Optional[str] = None,
+        **kwargs,
+    ) -> None:
         """Adds a KML file to the map.
 
         Args:

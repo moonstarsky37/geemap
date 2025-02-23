@@ -1,3 +1,11 @@
+"""The cartoee module contains functions for creating publication-quality maps with cartopy and Earth Engine data."""
+
+# *******************************************************************************#
+# This module contains extra features of the geemap package.                     #
+# The geemap community will maintain the extra features.                         #
+# *******************************************************************************#
+
+
 import logging
 import os
 import subprocess
@@ -15,10 +23,9 @@ import requests
 from matplotlib import cm, colors
 from matplotlib import font_manager as mfonts
 
-from .basemaps import xyz_tiles
+from .basemaps import custom_tiles
 
 try:
-
     import cartopy.crs as ccrs
     import cartopy.io.img_tiles as cimgt
     from cartopy.mpl.geoaxes import GeoAxes, GeoAxesSubplot
@@ -26,7 +33,6 @@ try:
     from PIL import Image
 
 except ImportError:
-
     print(
         "cartopy is not installed. Please see https://scitools.org.uk/cartopy/docs/latest/installing.html#installing for instructions on how to install cartopy.\n"
     )
@@ -162,7 +168,9 @@ def get_map(ee_object, proj=None, basemap=None, zoom_level=2, **kwargs):
     if basemap is not None:
         if isinstance(basemap, str):
             if basemap.upper() in ["ROADMAP", "SATELLITE", "TERRAIN", "HYBRID"]:
-                basemap = cimgt.GoogleTiles(url=xyz_tiles[basemap.upper()]["url"])
+                basemap = cimgt.GoogleTiles(
+                    url=custom_tiles["xyz"][basemap.upper()]["url"]
+                )
 
         try:
             ax.add_image(basemap, zoom_level)
@@ -195,8 +203,6 @@ def add_layer(
         ValueError: If `imgObj` is not of type ee.image.Image
         ValueError: If `ax` if not of type cartopy.mpl.geoaxes.GeoAxesSubplot '
     """
-
-    import warnings
 
     if (
         isinstance(ee_object, ee.geometry.Geometry)
@@ -842,7 +848,7 @@ def add_scale_bar(
         xcoords.append(dx)
         ycoords.append(ymean)
 
-    # Convertin to arrays:
+    # Converting to arrays:
     xcoords = np.asanyarray(xcoords)
     ycoords = np.asanyarray(ycoords)
 
@@ -1036,6 +1042,31 @@ def add_scale_bar_lite(
     return
 
 
+def create_legend(
+    linewidth=None,
+    linestyle=None,
+    color=None,
+    marker=None,
+    markersize=None,
+    markeredgewidth=None,
+    markeredgecolor=None,
+    markerfacecolor=None,
+    markerfacecoloralt=None,
+    fillstyle=None,
+    antialiased=None,
+    dash_capstyle=None,
+    solid_capstyle=None,
+    dash_joinstyle=None,
+    solid_joinstyle=None,
+    pickradius=5,
+    drawstyle=None,
+    markevery=None,
+    **kwargs,
+):
+    if linewidth is None and marker is None:
+        raise ValueError("Either linewidth or marker must be specified.")
+
+
 def add_legend(
     ax,
     legend_elements=None,
@@ -1044,10 +1075,15 @@ def add_legend(
     font_weight="normal",
     font_color="black",
     font_family=None,
+    title=None,
+    title_fontize=16,
+    title_fontproperties=None,
+    **kwargs,
 ):
     """Adds a legend to the map. The legend elements can be formatted as:
     legend_elements = [Line2D([], [], color='#00ffff', lw=2, label='Coastline'),
         Line2D([], [], marker='o', color='#A8321D', label='City', markerfacecolor='#A8321D', markersize=10, ls ='')]
+        For more legend properties, see: https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.legend.html
 
     Args:
         ax (cartopy.mpl.geoaxes.GeoAxesSubplot | cartopy.mpl.geoaxes.GeoAxes): required cartopy GeoAxesSubplot object.
@@ -1061,6 +1097,13 @@ def add_legend(
         Exception: If the legend fails to add.
     """
     from matplotlib.lines import Line2D
+
+    if title_fontize is not None and (title_fontproperties is not None):
+        raise ValueError("title_fontize and title_fontproperties cannot be both set.")
+    elif title_fontize is not None:
+        kwargs["title_fontsize"] = title_fontize
+    elif title_fontproperties is not None:
+        kwargs["title_fontproperties"] = title_fontproperties
 
     try:
         if legend_elements is None:
@@ -1081,7 +1124,13 @@ def add_legend(
             fontdict = {"family": font_family, "size": font_size, "weight": font_weight}
         else:
             fontdict = {"size": font_size, "weight": font_weight}
-        leg = ax.legend(handles=legend_elements, loc=loc, prop=fontdict)
+        leg = ax.legend(
+            handles=legend_elements,
+            loc=loc,
+            prop=fontdict,
+            title=title,
+            **kwargs,
+        )
 
         # Change font color If default color is changed.
         if font_color != "black":
@@ -1110,7 +1159,11 @@ def get_image_collection_gif(
     file_format="png",
     north_arrow_dict={},
     scale_bar_dict={},
+    overlay_layers=[],
+    overlay_styles=[],
+    colorbar_dict={},
     verbose=True,
+    **kwargs,
 ):
     """Download all the images in an image collection and use them to generate a gif/video.
     Args:
@@ -1126,13 +1179,17 @@ def get_image_collection_gif(
         date_format (str, optional): A pattern, as described at http://joda-time.sourceforge.net/apidocs/org/joda/time/format/DateTimeFormat.html. Defaults to "YYYY-MM-dd".
         fig_size (tuple, optional): Size of the figure.
         dpi_plot (int, optional): The resolution in dots per inch of the plot.
-        file_format (str, optional): Either 'png' or 'jpg'.
+        file_format (str, optional): Either 'png' or 'jpg'. Defaults to 'png'.
         north_arrow_dict (dict, optional): Parameters for the north arrow. See https://geemap.org/cartoee/#geemap.cartoee.add_north_arrow. Defaults to {}.
         scale_bar_dict (dict, optional): Parameters for the scale bar. See https://geemap.org/cartoee/#geemap.cartoee.add_scale_bar. Defaults. to {}.
+        overlay_layers (list, optional): A list of Earth Engine objects to overlay on the map. Defaults to [].
+        overlay_styles (list, optional): A list of dictionaries of visualization parameters for overlay layers. Defaults to [].
+        colorbar_dict (dict, optional): Parameters for the colorbar. See https://geemap.org/cartoee/#geemap.cartoee.add_colorbar. Defaults to {}.
         verbose (bool, optional): Whether or not to print text when the program is running. Defaults to True.
+        **kwargs: Additional keyword arguments are passed to the add_layer() function.
     """
 
-    from .geemap import png_to_gif
+    from .geemap import png_to_gif, jpg_to_gif
 
     out_dir = os.path.abspath(out_dir)
     if not os.path.exists(out_dir):
@@ -1147,13 +1204,14 @@ def get_image_collection_gif(
     dates = ee_ic.aggregate_array("system:time_start")
     dates = dates.map(lambda d: ee.Date(d).format(date_format)).getInfo()
 
+    digits = len(str(len(dates)))
+
     # list of file name
     img_list = []
 
     for i, date in enumerate(dates):
         image = ee.Image(images.get(i))
-        name = str(names[i])
-        name = name + "." + file_format
+        name = str(i + 1).zfill(digits) + "." + file_format
         out_img = os.path.join(out_dir, name)
         img_list.append(out_img)
 
@@ -1168,6 +1226,47 @@ def get_image_collection_gif(
 
         # Plot image
         ax = get_map(image, region=region, vis_params=vis_params, cmap=cmap, proj=proj)
+
+        # check length of overlay layers and styles
+        if len(overlay_layers) != len(overlay_styles):
+            raise ValueError(
+                "The length of overlay_layers and overlay_styles must be the same."
+            )
+
+        for ee_object, style in zip(overlay_layers, overlay_styles):
+            if (
+                isinstance(ee_object, ee.geometry.Geometry)
+                or isinstance(ee_object, ee.feature.Feature)
+                or isinstance(ee_object, ee.featurecollection.FeatureCollection)
+            ):
+                overlay_vis_params = (
+                    None  # for vector data, we can pass style parameters directly
+                )
+            elif (
+                isinstance(ee_object, ee.image.Image)
+                or isinstance(ee_object, ee.imagecollection.ImageCollection)
+                or isinstance(ee_object, ee.imagecollection.ImageCollection)
+            ):
+                overlay_vis_params = style  # for raster, we need to pass vis_params
+                style = None
+            else:
+                raise ValueError(
+                    "The overlay object must be an ee.Geometry, ee.Feature, ee.FeatureCollection, ee.Image, or ee.ImageCollection."
+                )
+
+            add_layer(
+                ax,
+                ee_object,
+                region=region,
+                cmap=cmap,
+                vis_params=overlay_vis_params,
+                style=style,
+                **kwargs,
+            )
+
+        # Add colorbar if colorbar_dict is not empty
+        if colorbar_dict:
+            add_colorbar(ax, vis_params, **colorbar_dict)
 
         # Add grid
         if grid_interval is not None:
@@ -1196,12 +1295,14 @@ def get_image_collection_gif(
         plt.close()
 
     out_gif = os.path.abspath(out_gif)
-    png_to_gif(out_dir, out_gif, fps)
+    if file_format == "png":
+        png_to_gif(out_dir, out_gif, fps)
+    elif file_format == "jpg":
+        jpg_to_gif(out_dir, out_gif, fps)
     if verbose:
         print(f"GIF saved to {out_gif}")
 
     if mp4:
-
         video_filename = out_gif.replace(".gif", ".mp4")
 
         try:
@@ -1256,3 +1357,19 @@ def get_image_collection_gif(
 
         if verbose:
             print(f"MP4 saved to {output_video_file_name}")
+
+
+def savefig(fig, fname, dpi="figure", bbox_inches="tight", **kwargs):
+    """Save figure to file. It wraps the matplotlib.pyplot.savefig() function.
+            See https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.savefig.html for more details.
+
+    Args:
+        fig (matplotlib.figure.Figure): The figure to save.
+        fname (str): A path to a file, or a Python file-like object.
+        dpi (int | str, optional): The resolution in dots per inch. If 'figure', use the figure's dpi value. Defaults to 'figure'.
+        bbox_inches (str, optional): Bounding box in inches: only the given portion of the figure is saved.
+            If 'tight', try to figure out the tight bbox of the figure.
+        kwargs (dict, optional): Additional keyword arguments are passed on to the savefig() method.
+    """
+
+    fig.savefig(fname=fname, dpi=dpi, bbox_inches=bbox_inches, **kwargs)

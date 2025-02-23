@@ -1,59 +1,69 @@
-"""Module for basemaps. Each basemap is defined as item in the basemaps dictionary. For example, to access Google basemaps, use the following:
+"""Module for basemaps.
 
-basemaps['ROADMAP'], basemaps['SATELLITE'], basemaps['HYBRID'].
+Each basemap is defined as an item in the `basemaps` dictionary.
 
 More WMS basemaps can be found at the following websites:
 
-1. USGS National Map: https://viewer.nationalmap.gov/services/
-
-2. MRLC NLCD Land Cover data: https://viewer.nationalmap.gov/services/
-
-3. FWS NWI Wetlands data: https://www.fws.gov/wetlands/Data/Web-Map-Services.html
+  1. USGS National Map: https://viewer.nationalmap.gov/services/
+  2. MRLC NLCD Land Cover data: https://viewer.nationalmap.gov/services/
+  3. FWS NWI Wetlands data: https://www.fws.gov/wetlands/Data/Web-Map-Services.html
 
 """
 
+# *******************************************************************************#
+# This module contains core features and extra features of the geemap package.   #
+# The Earth Engine team and the geemap community will maintain the core features.#
+# The geemap community will maintain the extra features.                         #
+# The core features include classes and functions below until the line # ******* #
+# *******************************************************************************#
+
 import collections
 import os
-import requests
+from typing import Any, Optional
+
 import folium
 import ipyleaflet
-import xyzservices.providers as xyz
-from xyzservices import TileProvider
-from .common import check_package, planet_tiles
+import requests
+import xyzservices
 
-# Custom XYZ tile services.
-xyz_tiles = {
+from .common import check_package, get_google_maps_api_key, planet_tiles
+
+XYZ_TILES = {
     "OpenStreetMap": {
         "url": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
         "attribution": "OpenStreetMap",
         "name": "OpenStreetMap",
     },
     "ROADMAP": {
-        "url": "https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}",
-        "attribution": "Google",
-        "name": "Google Maps",
+        "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+        "attribution": "Esri",
+        "name": "Esri.WorldStreetMap",
     },
     "SATELLITE": {
-        "url": "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-        "attribution": "Google",
-        "name": "Google Satellite",
+        "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "attribution": "Esri",
+        "name": "Esri.WorldImagery",
+        "max_zoom": 30,
     },
     "TERRAIN": {
-        "url": "https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}",
-        "attribution": "Google",
-        "name": "Google Terrain",
+        "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+        "attribution": "Esri",
+        "name": "Esri.WorldTopoMap",
+        "max_zoom": 30,
     },
     "HYBRID": {
-        "url": "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-        "attribution": "Google",
-        "name": "Google Satellite",
+        "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "attribution": "Esri",
+        "name": "Esri.WorldImagery",
+        "max_zoom": 30,
     },
 }
 
+
 # Custom WMS tile services.
-wms_tiles = {
+WMS_TILES = {
     "FWS NWI Wetlands": {
-        "url": "https://www.fws.gov/wetlands/arcgis/services/Wetlands/MapServer/WMSServer?",
+        "url": "https://fwspublicservices.wim.usgs.gov/wetlandsmapservice/services/Wetlands/MapServer/WMSServer?",
         "layers": "1",
         "name": "FWS NWI Wetlands",
         "attribution": "FWS",
@@ -65,6 +75,14 @@ wms_tiles = {
         "layers": "0",
         "name": "FWS NWI Wetlands Raster",
         "attribution": "FWS",
+        "format": "image/png",
+        "transparent": True,
+    },
+    "NLCD 2021 CONUS Land Cover": {
+        "url": "https://www.mrlc.gov/geoserver/mrlc_display/NLCD_2021_Land_Cover_L48/wms?",
+        "layers": "NLCD_2021_Land_Cover_L48",
+        "name": "NLCD 2021 CONUS Land Cover",
+        "attribution": "MRLC",
         "format": "image/png",
         "transparent": True,
     },
@@ -139,6 +157,7 @@ wms_tiles = {
         "attribution": "USGS",
         "format": "image/png",
         "transparent": True,
+        "max_zoom": 30,
     },
     "USGS NAIP Imagery False Color": {
         "url": "https://imagery.nationalmap.gov/arcgis/services/USGSNAIPImagery/ImageServer/WMSServer?",
@@ -196,33 +215,209 @@ wms_tiles = {
         "format": "image/png",
         "transparent": True,
     },
+    "ESA WorldCover 2021": {
+        "url": "https://services.terrascope.be/wms/v2",
+        "layers": "WORLDCOVER_2021_MAP",
+        "name": "ESA Worldcover 2021",
+        "attribution": "ESA",
+        "format": "image/png",
+        "transparent": True,
+    },
+    "ESA WorldCover 2021 S2 FCC": {
+        "url": "https://services.terrascope.be/wms/v2",
+        "layers": "WORLDCOVER_2021_S2_FCC",
+        "name": "ESA Worldcover 2021 S2 FCC",
+        "attribution": "ESA",
+        "format": "image/png",
+        "transparent": True,
+    },
+    "ESA WorldCover 2021 S2 TCC": {
+        "url": "https://services.terrascope.be/wms/v2",
+        "layers": "WORLDCOVER_2021_S2_TCC",
+        "name": "ESA Worldcover 2021 S2 TCC",
+        "attribution": "ESA",
+        "format": "image/png",
+        "transparent": True,
+    },
 }
 
+custom_tiles = {"xyz": XYZ_TILES, "wms": WMS_TILES}
 
-def get_xyz_dict(free_only=True, _collection=None, _output=None):
+
+class GoogleMapsTileProvider(xyzservices.TileProvider):
+    """Google Maps TileProvider."""
+
+    MAP_TYPE_CONFIG = {
+        "roadmap": {"mapType": "roadmap"},
+        "satellite": {"mapType": "satellite"},
+        "terrain": {
+            "mapType": "terrain",
+            "layerTypes": ["layerRoadmap"],
+        },
+        "hybrid": {
+            "mapType": "satellite",
+            "layerTypes": ["layerRoadmap"],
+        },
+    }
+
+    def __init__(
+        self,
+        map_type: str = "roadmap",
+        language: str = "en-Us",
+        region: str = "US",
+        api_key: Optional[str] = None,
+        **kwargs: Any,
+    ):
+        """
+        Generates Google Map tiles using the provided parameters. To get an API key
+            and enable Map Tiles API, visit
+            https://developers.google.com/maps/get-started#create-project.
+            You can set the API key using the environment variable
+            `GOOGLE_MAPS_API_KEY` or by passing it as an argument.
+
+        Args:
+            map_type (str, optional): The type of map to generate. Options are
+                'roadmap', 'satellite', 'terrain', 'hybrid', 'traffic', 'streetview'.
+                Defaults to 'roadmap'.
+            language (str, optional): An IETF language tag that specifies the
+                language used to display information on the tiles, such as 'zh-Cn'.
+                Defaults to 'en-Us'.
+            region (str, optional): A Common Locale Data Repository region
+                identifier (two uppercase letters) that represents the physical
+                location of the user. Defaults to 'US'.
+            api_key (str, optional): The API key to use for the Google Maps API.
+                If not provided, it will try to get it from the environment or
+                Colab user data with the key 'GOOGLE_MAPS_API_KEY'. Defaults to None.
+            **kwargs: Additional parameters to pass to the map generation. For more
+                info, visit https://bit.ly/3UhbZKU
+
+        Raises:
+            ValueError: If the API key is not provided and cannot be found in the
+                environment or Colab user data.
+            ValueError: If the map_type is not one of the allowed types.
+
+        Example:
+            >>> from geemap.basemaps import GoogleMapsTileProvider
+            >>> m = geemap.Map()
+            >>> basemap = GoogleMapsTileProvider(map_type='roadmap',
+                language="en-Us", region="US", scale="scaleFactor2x", highDpi=True)
+            >>> m.add_basemap(basemap)
+
+        Returns:
+            TileProvider object: A TileProvider object with the Google Maps tile.
+        """
+
+        key = api_key or get_google_maps_api_key()
+        if key is None:
+            raise ValueError(
+                "API key is required to access Google Maps API. To get an API "
+                "key and enable Map Tiles API, visit "
+                "https://developers.google.com/maps/get-started#create-project"
+            )
+
+        if map_type not in self.MAP_TYPE_CONFIG:
+            raise ValueError(f"map_type must be one of: {self.MAP_TYPE_CONFIG.keys()}")
+
+        request_url = f"https://tile.googleapis.com/v1/createSession?key={key}"
+        response = requests.post(
+            url=request_url,
+            headers={"Content-Type": "application/json"},
+            json={
+                **self.MAP_TYPE_CONFIG[map_type],
+                "language": language,
+                "region": region,
+                **kwargs,
+            },
+            timeout=3,
+        )
+
+        if response.status_code == requests.codes.ok:
+            json = response.json()
+            map_name = map_type.capitalize()
+            super().__init__(
+                {
+                    "url": f"https://tile.googleapis.com/v1/2dtiles/{{z}}/{{x}}/{{y}}?session={json['session']}&key={{accessToken}}",
+                    "attribution": f"© Google {map_name}",
+                    "accessToken": key,
+                    "name": f"Google.{map_name}",
+                    "ext": json["imageFormat"],
+                    "tileSize": json["tileWidth"],
+                }
+            )
+        else:
+            raise RuntimeError(
+                f"Error creating a Maps API session:\n{response.json()}."
+            )
+
+
+def get_google_map_tile_providers(
+    language: str = "en-Us",
+    region: str = "US",
+    api_key: Optional[str] = None,
+    **kwargs: Any,
+):
+    """
+    Generates a dictionary of Google Map tile providers for different map types.
+
+    Args:
+        language (str, optional): An IETF language tag that specifies the
+            language used to display information on the tiles, such as 'zh-Cn'.
+            Defaults to 'en-Us'.
+        region (str, optional): A Common Locale Data Repository region
+            identifier (two uppercase letters) that represents the physical
+            location of the user. Defaults to 'US'.
+        api_key (str, optional): The API key to use for the Google Maps API.
+            If not provided, it will try to get it from the environment or
+            Colab user data with the key 'GOOGLE_MAPS_API_KEY'. Defaults to None.
+        **kwargs: Additional parameters to pass to the map generation. For more
+            info, visit https://bit.ly/3UhbZKU
+
+    Returns:
+        dict: A dictionary where the keys are the map types
+        ('roadmap', 'satellite', 'terrain', 'hybrid')
+        and the values are the corresponding GoogleMapsTileProvider objects.
+    """
+    gmap_providers = {}
+
+    for m_type in GoogleMapsTileProvider.MAP_TYPE_CONFIG:
+        gmap_providers[m_type] = GoogleMapsTileProvider(
+            map_type=m_type, language=language, region=region, api_key=api_key, **kwargs
+        )
+
+    return gmap_providers
+
+
+def get_xyz_dict(free_only=True, france=False):
     """Returns a dictionary of xyz services.
 
     Args:
-        free_only (bool, optional): Whether to return only free xyz tile services that do not require an access token. Defaults to True.
+        free_only (bool, optional): Whether to return only free xyz tile
+            services that do not require an access token. Defaults to True.
+        france (bool, optional): Whether to include Geoportail France basemaps.
+            Defaults to False.
 
     Returns:
         dict: A dictionary of xyz services.
     """
+    xyz_bunch = xyzservices.providers
 
-    if _collection is None:
-        _collection = xyz
+    if free_only:
+        xyz_bunch = xyz_bunch.filter(requires_token=False)
+    if not france:
+        xyz_bunch = xyz_bunch.filter(
+            function=lambda tile: "france" not in dict(tile)["name"].lower()
+        )
 
-    if _output is None:
-        _output = {}
+    xyz_dict = xyz_bunch.flatten()
 
-    for v in _collection.values():
-        if isinstance(v, TileProvider):
-            if not (v.requires_token() and free_only):
-                _output[v.name] = v
-        else:  # it's a Bunch
-            get_xyz_dict(free_only, v, _output)
+    for key, value in xyz_dict.items():
+        tile = xyzservices.TileProvider(value)
+        if "type" not in tile:
+            tile["type"] = "xyz"
+        xyz_dict[key] = tile
 
-    return collections.OrderedDict(sorted(_output.items()))
+    xyz_dict = collections.OrderedDict(sorted(xyz_dict.items()))
+    return xyz_dict
 
 
 def xyz_to_leaflet():
@@ -232,39 +427,88 @@ def xyz_to_leaflet():
         dict: A dictionary of ipyleaflet tile layers.
     """
     leaflet_dict = {}
+    # Ignore Esri basemaps if they are already in the custom XYZ_TILES.
+    ignore_list = [XYZ_TILES[tile]["name"] for tile in XYZ_TILES]
 
-    for key, tile in xyz_tiles.items():
-        name = tile["name"]
-        url = tile["url"]
-        attribution = tile["attribution"]
-        leaflet_dict[key] = ipyleaflet.TileLayer(
-            url=url, name=name, attribution=attribution, max_zoom=22
+    # Add custom tiles.
+    for tile_type, tile_dict in custom_tiles.items():
+        for tile_provider, tile_info in tile_dict.items():
+            tile_info["type"] = tile_type
+            tile_info["max_zoom"] = 30
+            leaflet_dict[tile_info["name"]] = tile_info
+
+    # Add xyzservices.provider tiles.
+    for tile_provider, tile_info in get_xyz_dict().items():
+        if tile_info["name"] in ignore_list:
+            continue
+        tile_info["url"] = tile_info.build_url()
+        tile_info["max_zoom"] = 30
+        leaflet_dict[tile_info["name"]] = tile_info
+
+    return leaflet_dict
+
+
+def xyz_to_folium():
+    """Convert xyz tile services to folium tile layers.
+
+    Returns:
+        dict: A dictionary of folium tile layers.
+    """
+    folium_dict = {}
+    # Ignore Esri basemaps if they are already in the custom XYZ_TILES.
+    ignore_list = [XYZ_TILES[tile]["name"] for tile in XYZ_TILES]
+
+    for key, tile in custom_tiles["xyz"].items():
+        folium_dict[key] = folium.TileLayer(
+            tiles=tile["url"],
+            attr=tile["attribution"],
+            name=tile["name"],
+            overlay=True,
+            control=True,
+            max_zoom=30,
         )
 
-    for key, tile in wms_tiles.items():
-        leaflet_dict[key] = ipyleaflet.WMSLayer(
+    for key, tile in custom_tiles["wms"].items():
+        folium_dict[key] = folium.WmsTileLayer(
             url=tile["url"],
             layers=tile["layers"],
             name=tile["name"],
-            attribution=tile["attribution"],
-            format=tile["format"],
+            attr=tile["attribution"],
+            fmt=tile["format"],
             transparent=tile["transparent"],
+            overlay=True,
+            control=True,
+            max_zoom=30,
         )
 
     for item in get_xyz_dict().values():
-        leaflet_dict[item.name] = ipyleaflet.TileLayer(
-            url=item.build_url(),
+        if item["name"] in ignore_list:
+            continue
+        folium_dict[item.name] = folium.TileLayer(
+            tiles=item.build_url(),
+            attr=item.attribution,
             name=item.name,
-            max_zoom=item.get("max_zoom", 22),
-            attribution=item.attribution,
+            max_zoom=item.get("max_zoom", 30),
+            overlay=True,
+            control=True,
         )
 
     if os.environ.get("PLANET_API_KEY") is not None:
+        planet_dict = planet_tiles(tile_format="folium")
+        folium_dict.update(planet_dict)
 
-        planet_dict = planet_tiles(tile_format="ipyleaflet")
-        leaflet_dict.update(planet_dict)
+    return folium_dict
 
-    return leaflet_dict
+
+# ******************************************************************************#
+# The classes and functions above are the core features of the geemap package.  #
+# The Earth Engine team and the geemap community will maintain these features.  #
+# ******************************************************************************#
+
+# ******************************************************************************#
+# The classes and functions below are the extra features of the geemap package. #
+# The geemap community will maintain these features.                            #
+# ******************************************************************************#
 
 
 def xyz_to_pydeck():
@@ -278,17 +522,20 @@ def xyz_to_pydeck():
     import pydeck as pdk
 
     pydeck_dict = {}
+    # Ignore Esri basemaps if they are already in the custom XYZ_TILES.
+    ignore_list = [XYZ_TILES[tile]["name"] for tile in XYZ_TILES]
 
-    for key, tile in xyz_tiles.items():
+    for key, tile in custom_tiles["xyz"].items():
         url = tile["url"]
         pydeck_dict[key] = url
 
     for key, item in get_xyz_dict().items():
+        if item["name"] in ignore_list:
+            continue
         url = item.build_url()
         pydeck_dict[key] = url
 
         if os.environ.get("PLANET_API_KEY") is not None:
-
             planet_dict = planet_tiles(tile_format="ipyleaflet")
             for id_, tile in planet_dict.items():
                 pydeck_dict[id_] = tile.url
@@ -306,54 +553,6 @@ def xyz_to_pydeck():
     return pydeck_dict
 
 
-def xyz_to_folium():
-    """Convert xyz tile services to folium tile layers.
-
-    Returns:
-        dict: A dictionary of folium tile layers.
-    """
-    folium_dict = {}
-
-    for key, tile in xyz_tiles.items():
-        folium_dict[key] = folium.TileLayer(
-            tiles=tile["url"],
-            attr=tile["attribution"],
-            name=tile["name"],
-            overlay=True,
-            control=True,
-            max_zoom=22,
-        )
-
-    for key, tile in wms_tiles.items():
-        folium_dict[key] = folium.WmsTileLayer(
-            url=tile["url"],
-            layers=tile["layers"],
-            name=tile["name"],
-            attr=tile["attribution"],
-            fmt=tile["format"],
-            transparent=tile["transparent"],
-            overlay=True,
-            control=True,
-        )
-
-    for item in get_xyz_dict().values():
-        folium_dict[item.name] = folium.TileLayer(
-            tiles=item.build_url(),
-            attr=item.attribution,
-            name=item.name,
-            max_zoom=item.get("max_zoom", 22),
-            overlay=True,
-            control=True,
-        )
-
-    if os.environ.get("PLANET_API_KEY") is not None:
-
-        planet_dict = planet_tiles(tile_format="folium")
-        folium_dict.update(planet_dict)
-
-    return folium_dict
-
-
 def xyz_to_plotly():
     """Convert xyz tile services to plotly tile layers.
 
@@ -361,8 +560,10 @@ def xyz_to_plotly():
         dict: A dictionary of plotly tile layers.
     """
     plotly_dict = {}
+    # Ignore Esri basemaps if they are already in the custom XYZ_TILES.
+    ignore_list = [XYZ_TILES[tile]["name"] for tile in XYZ_TILES]
 
-    for key, tile in xyz_tiles.items():
+    for key, tile in custom_tiles["xyz"].items():
         plotly_dict[key] = {
             "below": "traces",
             "sourcetype": "raster",
@@ -372,6 +573,8 @@ def xyz_to_plotly():
         }
 
     for item in get_xyz_dict().values():
+        if item["name"] in ignore_list:
+            continue
         plotly_dict[item.name] = {
             "below": "traces",
             "sourcetype": "raster",
@@ -381,99 +584,6 @@ def xyz_to_plotly():
         }
 
     return plotly_dict
-
-
-def xyz_to_heremap():
-    """Convert xyz tile services to hermap tile layers.
-
-    Returns:
-        dict: A dictionary of heremap tile layers.
-    """
-
-    try:
-        import here_map_widget
-    except ImportError:
-        raise ImportError(
-            'This module requires the hermap package. Please install it using "pip install here-map-widget-for-jupyter".'
-        )
-
-    # Built-in heremap tile services.
-    here_tiles = {
-        "HERE_RASTER_NORMAL_MAP": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.normal.map
-        ),
-        "HERE_RASTER_NORMAL_BASE": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.normal.base
-        ),
-        "HERE_RASTER_NORMAL_BASE_NIGHT": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.normal.basenight
-        ),
-        "HERE_RASTER_NORMAL_LABELS": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.normal.labels
-        ),
-        "HERE_RASTER_NORMAL_TRANSIT": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.normal.transit
-        ),
-        "HERE_RASTER_NORMAL_XBASE": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.normal.xbase
-        ),
-        "HERE_RASTER_NORMAL_XBASE_NIGHT": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.normal.xbasenight
-        ),
-        "HERE_RASTER_SATELLITE_MAP": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.satellite.map
-        ),
-        "HERE_RASTER_SATELLITE_LABELS": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.satellite.labels
-        ),
-        "HERE_RASTER_SATELLITE_BASE": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.satellite.base
-        ),
-        "HERE_RASTER_SATELLITE_XBASE": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.satellite.xbase
-        ),
-        "HERE_RASTER_TERRAIN_MAP": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.terrain.map
-        ),
-        "HERE_RASTER_TERRAIN_LABELS": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.terrain.labels
-        ),
-        "HERE_RASTER_TERRAIN_BASE": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.terrain.base
-        ),
-        "HERE_RASTER_TERRAIN_XBASE": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.raster.terrain.xbase
-        ),
-        "HERE_VECTOR_NORMAL_MAP": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.vector.normal.map
-        ),
-        "HERE_VECTOR_NORMAL_TRUCK": here_map_widget.DefaultLayers(
-            layer_name=here_map_widget.DefaultLayerNames.vector.normal.truck
-        ),
-    }
-
-    heremap_dict = {}
-
-    for key, tile in xyz_tiles.items():
-        heremap_dict[key] = here_map_widget.TileLayer(
-            provider=here_map_widget.ImageTileProvider(
-                url=tile["url"], attribution=tile["attribution"], name=tile["name"]
-            )
-        )
-
-    for item in get_xyz_dict().values():
-        heremap_dict[item.name] = here_map_widget.TileLayer(
-            provider=here_map_widget.ImageTileProvider(
-                url=item.build_url(),
-                attribution=item.attribution,
-                name=item.name,
-                max_zoom=item.get("max_zoom", 22),
-            )
-        )
-
-    heremap_dict.update(here_tiles)
-
-    return heremap_dict
 
 
 def search_qms(keywords, limit=10):
@@ -498,14 +608,20 @@ def search_qms(keywords, limit=10):
 
 
 def get_qms(service_id):
-
     QMS_API = "https://qms.nextgis.com/api/v1/geoservices"
     service_details = requests.get(f"{QMS_API}/{service_id}")
     return service_details.json()
 
 
 def qms_to_geemap(service_id):
+    """Convert a qms service to an ipyleaflet tile layer.
 
+    Args:
+        service_id (str): Service ID.
+
+    Returns:
+        ipyleaflet.TileLayer: An ipyleaflet tile layer.
+    """
     service_details = get_qms(service_id)
     name = service_details["name"]
     url = service_details["url"]

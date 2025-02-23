@@ -1,5 +1,11 @@
-"""This module contains some common functions for both folium and ipyleaflet to interact with the Earth Engine Python API.
-"""
+"""This module contains some common functions for both folium and ipyleaflet to interact with the Earth Engine Python API."""
+
+# *******************************************************************************#
+# This module contains core features and extra features of the geemap package.   #
+# The Earth Engine team and the geemap community will maintain the core features.#
+# The geemap community will maintain the extra features.                         #
+# The core features include classes and functions below until the line # ******* #
+# *******************************************************************************#
 
 import csv
 import datetime
@@ -13,1389 +19,879 @@ import tarfile
 import urllib.request
 import warnings
 import zipfile
+import importlib.resources
 
 import ee
 import ipywidgets as widgets
-from IPython.display import display, IFrame
 from ipytree import Node, Tree
+from typing import Union, List, Dict, Optional, Any
+
+from .coreutils import *
+
+try:
+    from IPython.display import display, IFrame, Javascript
+except ImportError:
+    pass
 
 
-class TitilerEndpoint:
-    """This class contains the methods for the titiler endpoint."""
-
-    def __init__(
-        self,
-        endpoint="https://titiler.xyz",
-        name="stac",
-        TileMatrixSetId="WebMercatorQuad",
-    ):
-        """Initialize the TitilerEndpoint object.
-
-        Args:
-            endpoint (str, optional): The endpoint of the titiler server. Defaults to "https://titiler.xyz".
-            name (str, optional): The name to be used in the file path. Defaults to "stac".
-            TileMatrixSetId (str, optional): The TileMatrixSetId to be used in the file path. Defaults to "WebMercatorQuad".
-        """
-        self.endpoint = endpoint
-        self.name = name
-        self.TileMatrixSetId = TileMatrixSetId
-
-    def url_for_stac_item(self):
-        return f"{self.endpoint}/{self.name}/{self.TileMatrixSetId}/tilejson.json"
-
-    def url_for_stac_assets(self):
-        return f"{self.endpoint}/{self.name}/assets"
-
-    def url_for_stac_bounds(self):
-        return f"{self.endpoint}/{self.name}/bounds"
-
-    def url_for_stac_info(self):
-        return f"{self.endpoint}/{self.name}/info"
-
-    def url_for_stac_info_geojson(self):
-        return f"{self.endpoint}/{self.name}/info.geojson"
-
-    def url_for_stac_statistics(self):
-        return f"{self.endpoint}/{self.name}/statistics"
-
-    def url_for_stac_pixel_value(self, lon, lat):
-        return f"{self.endpoint}/{self.name}/point/{lon},{lat}"
-
-    def url_for_stac_wmts(self):
-        return (
-            f"{self.endpoint}/{self.name}/{self.TileMatrixSetId}/WMTSCapabilities.xml"
-        )
-
-
-class PlanetaryComputerEndpoint(TitilerEndpoint):
-    """This class contains the methods for the Microsoft Planetary Computer endpoint."""
-
-    def __init__(
-        self,
-        endpoint="https://planetarycomputer.microsoft.com/api/data/v1",
-        name="item",
-        TileMatrixSetId="WebMercatorQuad",
-    ):
-        """Initialize the PlanetaryComputerEndpoint object.
-
-        Args:
-            endpoint (str, optional): The endpoint of the titiler server. Defaults to "https://planetarycomputer.microsoft.com/api/data/v1".
-            name (str, optional): The name to be used in the file path. Defaults to "item".
-            TileMatrixSetId (str, optional): The TileMatrixSetId to be used in the file path. Defaults to "WebMercatorQuad".
-        """
-        super().__init__(endpoint, name, TileMatrixSetId)
-
-    def url_for_stac_collection(self):
-        return f"{self.endpoint}/collection/{self.TileMatrixSetId}/tilejson.json"
-
-    def url_for_collection_assets(self):
-        return f"{self.endpoint}/collection/assets"
-
-    def url_for_collection_bounds(self):
-        return f"{self.endpoint}/collection/bounds"
-
-    def url_for_collection_info(self):
-        return f"{self.endpoint}/collection/info"
-
-    def url_for_collection_info_geojson(self):
-        return f"{self.endpoint}/collection/info.geojson"
-
-    def url_for_collection_pixel_value(self, lon, lat):
-        return f"{self.endpoint}/collection/point/{lon},{lat}"
-
-    def url_for_collection_wmts(self):
-        return f"{self.endpoint}/collection/{self.TileMatrixSetId}/WMTSCapabilities.xml"
-
-    def url_for_collection_lat_lon_assets(self, lng, lat):
-        return f"{self.endpoint}/collection/{lng},{lat}/assets"
-
-    def url_for_collection_bbox_assets(self, minx, miny, maxx, maxy):
-        return f"{self.endpoint}/collection/{minx},{miny},{maxx},{maxy}/assets"
-
-    def url_for_stac_mosaic(self, searchid):
-        return f"{self.endpoint}/mosaic/{searchid}/{self.TileMatrixSetId}/tilejson.json"
-
-    def url_for_mosaic_info(self, searchid):
-        return f"{self.endpoint}/mosaic/{searchid}/info"
-
-    def url_for_mosaic_lat_lon_assets(self, searchid, lon, lat):
-        return f"{self.endpoint}/mosaic/{searchid}/{lon},{lat}/assets"
-
-
-def check_titiler_endpoint(titiler_endpoint=None):
-    """Returns the default titiler endpoint.
-
-    Returns:
-        object: A titiler endpoint.
-    """
-    if titiler_endpoint is None:
-        if os.environ.get("TITILER_ENDPOINT") == "planetary-computer":
-            titiler_endpoint = PlanetaryComputerEndpoint()
-        else:
-            titiler_endpoint = TitilerEndpoint()
-    elif titiler_endpoint in ["planetary-computer", "pc"]:
-        titiler_endpoint = PlanetaryComputerEndpoint()
-
-    return titiler_endpoint
-
-
-########################################
-# EE Authentication and Initialization #
-########################################
-
-
-def ee_initialize(token_name="EARTHENGINE_TOKEN", auth_mode="notebook"):
-    """Authenticates Earth Engine and initialize an Earth Engine session
+def ee_export_image(
+    ee_object,
+    filename,
+    scale=None,
+    crs=None,
+    crs_transform=None,
+    region=None,
+    dimensions=None,
+    file_per_band=False,
+    format="ZIPPED_GEO_TIFF",
+    unzip=True,
+    unmask_value=None,
+    timeout=300,
+    proxies=None,
+    verbose=True,
+):
+    """Exports an ee.Image as a GeoTIFF.
 
     Args:
-        token_name (str, optional): The name of the Earth Engine token. Defaults to "EARTHENGINE_TOKEN".
-        auth_mode (str, optional): The authentication mode, can be one of paste,notebook,gcloud,appdefault. Defaults to "notebook".
+        ee_object (object): The ee.Image to download.
+        filename (str): Output filename for the exported image.
+        scale (float, optional): A default scale to use for any bands that do not specify one; ignored if crs and crs_transform is specified. Defaults to None.
+        crs (str, optional): A default CRS string to use for any bands that do not explicitly specify one. Defaults to None.
+        crs_transform (list, optional): a default affine transform to use for any bands that do not specify one, of the same format as the crs_transform of bands. Defaults to None.
+        region (object, optional): A polygon specifying a region to download; ignored if crs and crs_transform is specified. Defaults to None.
+        dimensions (list, optional): An optional array of two integers defining the width and height to which the band is cropped. Defaults to None.
+        file_per_band (bool, optional): Whether to produce a different GeoTIFF per band. Defaults to False.
+        format (str, optional):  One of: "ZIPPED_GEO_TIFF" (GeoTIFF file(s) wrapped in a zip file, default), "GEO_TIFF" (GeoTIFF file), "NPY" (NumPy binary format). If "GEO_TIFF" or "NPY",
+            filePerBand and all band-level transformations will be ignored. Loading a NumPy output results in a structured array.
+        unzip (bool, optional): Whether to unzip the downloaded file. Defaults to True.
+        unmask_value (float, optional): The value to use for pixels that are masked in the input image.
+            If the exported image contains zero values, you should set the unmask value to a  non-zero value so that the zero values are not treated as missing data. Defaults to None.
+        timeout (int, optional): The timeout in seconds for the request. Defaults to 300.
+        proxies (dict, optional): A dictionary of proxy servers to use. Defaults to None.
+        verbose (bool, optional): Whether to print out descriptive text. Defaults to True.
     """
-    import httplib2
 
-    if ee.data._credentials is None:
-        try:
-            ee_token = os.environ.get(token_name)
-            if ee_token is not None:
-                credential_file_path = os.path.expanduser(
-                    "~/.config/earthengine/credentials"
-                )
-                if not os.path.exists(credential_file_path):
-                    os.makedirs(os.path.dirname(credential_file_path), exist_ok=True)
-                    if ee_token.startswith("{") and ee_token.endswith(
-                        "}"
-                    ):  # deals with token generated by new auth method (earthengine-api>=0.1.304).
-                        token_dict = json.loads(ee_token)
-                        with open(credential_file_path, "w") as f:
-                            f.write(json.dumps(token_dict))
-                    else:
-                        credential = (
-                            '{"refresh_token":"%s"}' % ee_token
-                        )  # deals with token generated by old auth method.
-                        with open(credential_file_path, "w") as f:
-                            f.write(credential)
-            elif in_colab_shell():
-                if credentials_in_drive() and (not credentials_in_colab()):
-                    copy_credentials_to_colab()
-                elif not credentials_in_colab:
-                    ee.Authenticate(auth_mode=auth_mode)
-                    if is_drive_mounted() and (not credentials_in_drive()):
-                        copy_credentials_to_drive()
-                else:
-                    if is_drive_mounted():
-                        copy_credentials_to_drive()
+    if not isinstance(ee_object, ee.Image):
+        print("The ee_object must be an ee.Image.")
+        return
 
-            ee.Initialize(http_transport=httplib2.Http())
-        except Exception:
-            ee.Authenticate(auth_mode=auth_mode)
-            ee.Initialize(http_transport=httplib2.Http())
+    if unmask_value is not None:
+        ee_object = ee_object.selfMask().unmask(unmask_value)
+        if isinstance(region, ee.Geometry):
+            ee_object = ee_object.clip(region)
+        elif isinstance(region, ee.FeatureCollection):
+            ee_object = ee_object.clipToCollection(region)
 
+    filename = os.path.abspath(filename)
+    basename = os.path.basename(filename)
+    name = os.path.splitext(basename)[0]
+    filetype = os.path.splitext(basename)[1][1:].lower()
+    filename_zip = filename.replace(".tif", ".zip")
 
-def set_proxy(port=1080, ip="http://127.0.0.1", timeout=300):
-    """Sets proxy if needed. This is only needed for countries where Google services are not available.
-
-    Args:
-        port (int, optional): The proxy port number. Defaults to 1080.
-        ip (str, optional): The IP address. Defaults to 'http://127.0.0.1'.
-        timeout (int, optional): The timeout in seconds. Defaults to 300.
-    """
-    try:
-
-        if not ip.startswith("http"):
-            ip = "http://" + ip
-        proxy = "{}:{}".format(ip, port)
-
-        os.environ["HTTP_PROXY"] = proxy
-        os.environ["HTTPS_PROXY"] = proxy
-
-        a = requests.get("https://earthengine.google.com/", timeout=timeout)
-
-        if a.status_code != 200:
-            print(
-                "Failed to connect to Earth Engine. Please double check the port number and ip address."
-            )
-
-    except Exception as e:
-        print(e)
-
-
-def in_colab_shell():
-    """Tests if the code is being executed within Google Colab."""
-    import sys
-
-    if "google.colab" in sys.modules:
-        return True
-    else:
-        return False
-
-
-def is_drive_mounted():
-    """Checks whether Google Drive is mounted in Google Colab.
-
-    Returns:
-        bool: Returns True if Google Drive is mounted, False otherwise.
-    """
-    drive_path = "/content/drive/My Drive"
-    if os.path.exists(drive_path):
-        return True
-    else:
-        return False
-
-
-def credentials_in_drive():
-    """Checks if the ee credentials file exists in Google Drive.
-
-    Returns:
-        bool: Returns True if Google Drive is mounted, False otherwise.
-    """
-    credentials_path = "/content/drive/My Drive/.config/earthengine/credentials"
-    if os.path.exists(credentials_path):
-        return True
-    else:
-        return False
-
-
-def credentials_in_colab():
-    """Checks if the ee credentials file exists in Google Colab.
-
-    Returns:
-        bool: Returns True if Google Drive is mounted, False otherwise.
-    """
-    credentials_path = "/root/.config/earthengine/credentials"
-    if os.path.exists(credentials_path):
-        return True
-    else:
-        return False
-
-
-def copy_credentials_to_drive():
-    """Copies ee credentials from Google Colab to Google Drive."""
-    src = "/root/.config/earthengine/credentials"
-    dst = "/content/drive/My Drive/.config/earthengine/credentials"
-
-    wd = os.path.dirname(dst)
-    if not os.path.exists(wd):
-        os.makedirs(wd)
-
-    shutil.copyfile(src, dst)
-
-
-def copy_credentials_to_colab():
-    """Copies ee credentials from Google Drive to Google Colab."""
-    src = "/content/drive/My Drive/.config/earthengine/credentials"
-    dst = "/root/.config/earthengine/credentials"
-
-    wd = os.path.dirname(dst)
-    if not os.path.exists(wd):
-        os.makedirs(wd)
-
-    shutil.copyfile(src, dst)
-
-
-########################################
-#         Package Installation         #
-########################################
-
-
-def check_install(package):
-    """Checks whether a package is installed. If not, it will install the package.
-
-    Args:
-        package (str): The name of the package to check.
-    """
-    import subprocess
+    if filetype != "tif":
+        print("The filename must end with .tif")
+        return
 
     try:
-        __import__(package)
-        # print('{} is already installed.'.format(package))
-    except ImportError:
-        print(f"{package} is not installed. Installing ...")
+        if verbose:
+            print("Generating URL ...")
+        params = {"name": name, "filePerBand": file_per_band}
+
+        params["scale"] = scale
+        if region is None:
+            region = ee_object.geometry()
+        if dimensions is not None:
+            params["dimensions"] = dimensions
+        if region is not None:
+            params["region"] = region
+        if crs is not None:
+            params["crs"] = crs
+        if crs_transform is not None:
+            params["crs_transform"] = crs_transform
+        if format != "ZIPPED_GEO_TIFF":
+            params["format"] = format
+
         try:
-            subprocess.check_call(["python", "-m", "pip", "install", package])
+            url = ee_object.getDownloadURL(params)
         except Exception as e:
-            print(f"Failed to install {package}")
+            print("An error occurred while downloading.")
             print(e)
-        print(f"{package} has been installed successfully.")
-
-
-def update_package():
-    """Updates the geemap package from the geemap GitHub repository without the need to use pip or conda.
-    In this way, I don't have to keep updating pypi and conda-forge with every minor update of the package.
-
-    """
-
-    try:
-        download_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-        if not os.path.exists(download_dir):
-            os.makedirs(download_dir)
-        clone_repo(out_dir=download_dir)
-
-        pkg_dir = os.path.join(download_dir, "geemap-master")
-        work_dir = os.getcwd()
-        os.chdir(pkg_dir)
-
-        if shutil.which("pip") is None:
-            cmd = "pip3 install ."
-        else:
-            cmd = "pip install ."
-
-        os.system(cmd)
-        os.chdir(work_dir)
-
-        print(
-            "\nPlease comment out 'geemap.update_package()' and restart the kernel to take effect:\nJupyter menu -> Kernel -> Restart & Clear Output"
-        )
-
-    except Exception as e:
-        raise Exception(e)
-
-
-def check_package(name, URL=""):
-
-    try:
-        __import__(name.lower())
-    except Exception:
-        raise ImportError(
-            f"{name} is not installed. Please install it before proceeding. {URL}"
-        )
-
-
-def clone_repo(out_dir=".", unzip=True):
-    """Clones the geemap GitHub repository.
-
-    Args:
-        out_dir (str, optional): Output folder for the repo. Defaults to '.'.
-        unzip (bool, optional): Whether to unzip the repository. Defaults to True.
-    """
-    url = "https://github.com/giswqs/geemap/archive/master.zip"
-    filename = "geemap-master.zip"
-    download_from_url(url, out_file_name=filename, out_dir=out_dir, unzip=unzip)
-
-
-def install_from_github(url):
-    """Install a package from a GitHub repository.
-
-    Args:
-        url (str): The URL of the GitHub repository.
-    """
-
-    try:
-        download_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-        if not os.path.exists(download_dir):
-            os.makedirs(download_dir)
-
-        repo_name = os.path.basename(url)
-        zip_url = os.path.join(url, "archive/master.zip")
-        filename = repo_name + "-master.zip"
-        download_from_url(
-            url=zip_url, out_file_name=filename, out_dir=download_dir, unzip=True
-        )
-
-        pkg_dir = os.path.join(download_dir, repo_name + "-master")
-        pkg_name = os.path.basename(url)
-        work_dir = os.getcwd()
-        os.chdir(pkg_dir)
-        print(f"Installing {pkg_name}...")
-        cmd = "pip install ."
-        os.system(cmd)
-        os.chdir(work_dir)
-        print(f"{pkg_name} has been installed successfully.")
-        # print("\nPlease comment out 'install_from_github()' and restart the kernel to take effect:\nJupyter menu -> Kernel -> Restart & Clear Output")
-
-    except Exception as e:
-        print(e)
-
-
-def check_git_install():
-    """Checks if Git is installed.
-
-    Returns:
-        bool: Returns True if Git is installed, otherwise returns False.
-    """
-    import webbrowser
-
-    cmd = "git --version"
-    output = os.popen(cmd).read()
-
-    if "git version" in output:
-        return True
-    else:
-        url = "https://git-scm.com/downloads"
-        print(f"Git is not installed. Please download Git from {url} and install it.")
-        webbrowser.open_new_tab(url)
-        return False
-
-
-def clone_github_repo(url, out_dir):
-    """Clones a GitHub repository.
-
-    Args:
-        url (str): The link to the GitHub repository
-        out_dir (str): The output directory for the cloned repository.
-    """
-
-    repo_name = os.path.basename(url)
-    # url_zip = os.path.join(url, 'archive/master.zip')
-    url_zip = url + "/archive/master.zip"
-
-    if os.path.exists(out_dir):
-        print(
-            "The specified output directory already exists. Please choose a new directory."
-        )
-        return
-
-    parent_dir = os.path.dirname(out_dir)
-    out_file_path = os.path.join(parent_dir, repo_name + ".zip")
-
-    try:
-        urllib.request.urlretrieve(url_zip, out_file_path)
-    except Exception:
-        print("The provided URL is invalid. Please double check the URL.")
-        return
-
-    with zipfile.ZipFile(out_file_path, "r") as zip_ref:
-        zip_ref.extractall(parent_dir)
-
-    src = out_file_path.replace(".zip", "-master")
-    os.rename(src, out_dir)
-    os.remove(out_file_path)
-
-
-def clone_google_repo(url, out_dir=None):
-    """Clones an Earth Engine repository from https://earthengine.googlesource.com, such as https://earthengine.googlesource.com/users/google/datasets
-
-    Args:
-        url (str): The link to the Earth Engine repository
-        out_dir (str, optional): The output directory for the cloned repository. Defaults to None.
-    """
-    repo_name = os.path.basename(url)
-
-    if out_dir is None:
-        out_dir = os.path.join(os.getcwd(), repo_name)
-
-    if not os.path.exists(os.path.dirname(out_dir)):
-        os.makedirs(os.path.dirname(out_dir))
-
-    if os.path.exists(out_dir):
-        print(
-            "The specified output directory already exists. Please choose a new directory."
-        )
-        return
-
-    if check_git_install():
-
-        cmd = f'git clone "{url}" "{out_dir}"'
-        os.popen(cmd).read()
-
-
-def open_github(subdir=None):
-    """Opens the GitHub repository for this package.
-
-    Args:
-        subdir (str, optional): Sub-directory of the repository. Defaults to None.
-    """
-    import webbrowser
-
-    url = "https://github.com/giswqs/geemap"
-
-    if subdir == "source":
-        url += "/tree/master/geemap/"
-    elif subdir == "examples":
-        url += "/tree/master/examples"
-    elif subdir == "tutorials":
-        url += "/tree/master/tutorials"
-
-    webbrowser.open_new_tab(url)
-
-
-def open_youtube():
-    """Opens the YouTube tutorials for geemap."""
-    import webbrowser
-
-    url = "https://www.youtube.com/playlist?list=PLAxJ4-o7ZoPccOFv1dCwvGI6TYnirRTg3"
-    webbrowser.open_new_tab(url)
-
-
-########################################
-#           Python Utilities           #
-########################################
-
-
-def is_tool(name):
-    """Check whether `name` is on PATH and marked as executable."""
-
-    # from shutil import which
-
-    return shutil.which(name) is not None
-
-
-def random_string(string_length=3):
-    """Generates a random string of fixed length.
-
-    Args:
-        string_length (int, optional): Fixed length. Defaults to 3.
-
-    Returns:
-        str: A random string
-    """
-    import random
-    import string
-
-    # random.seed(1001)
-    letters = string.ascii_lowercase
-    return "".join(random.choice(letters) for i in range(string_length))
-
-
-def open_image_from_url(url, timeout=300, proxies=None):
-    """Loads an image from the specified URL.
-
-    Args:
-        url (str): URL of the image.
-        timeout (int, optional): Timeout in seconds. Defaults to 300.
-        proxies (dict, optional): Dictionary of proxies. Defaults to None.
-
-    Returns:
-        object: Image object.
-    """
-    from PIL import Image
-
-    # from io import BytesIO
-    # from urllib.parse import urlparse
-
-    try:
-        response = requests.get(url, timeout=timeout, proxies=proxies)
-        img = Image.open(io.BytesIO(response.content))
-        return img
-    except Exception as e:
-        print(e)
-
-
-def show_image(img_path, width=None, height=None, verbose=True):
-    """Shows an image within Jupyter notebook.
-
-    Args:
-        img_path (str): The image file path.
-        width (int, optional): Width of the image in pixels. Defaults to None.
-        height (int, optional): Height of the image in pixels. Defaults to None.
-        verbose (bool, optional): If True, print the progress. Defaults to True.
-
-    """
-    from IPython.display import display
-
-    try:
-        out = widgets.Output()
-        # layout={'border': '1px solid black'})
-        # layout={'border': '1px solid black', 'width': str(width + 20) + 'px', 'height': str(height + 10) + 'px'},)
-        out.clear_output(wait=True)
-        display(out)
-        with out:
-            if isinstance(img_path, str) and img_path.startswith("http"):
-                ext = os.path.splitext(img_path)[1]
-                file_path = temp_file_path(ext)
-                download_from_url(img_path, file_path, verbose=verbose)
-            else:
-                file_path = img_path
-            file = open(file_path, "rb")
-            image = file.read()
-            if (width is None) and (height is None):
-                display(widgets.Image(value=image))
-            elif (width is not None) and (height is not None):
-                display(widgets.Image(value=image, width=width, height=height))
-            else:
-                print("You need set both width and height.")
-                return
-    except Exception as e:
-        print(e)
-
-
-def has_transparency(img):
-    """Checks whether an image has transparency.
-
-    Args:
-        img (object):  a PIL Image object.
-
-    Returns:
-        bool: True if it has transparency, False otherwise.
-    """
-
-    if img.mode == "P":
-        transparent = img.info.get("transparency", -1)
-        for _, index in img.getcolors():
-            if index == transparent:
-                return True
-    elif img.mode == "RGBA":
-        extrema = img.getextrema()
-        if extrema[3][0] < 255:
-            return True
-
-    return False
-
-
-def upload_to_imgur(in_gif):
-    """Uploads an image to imgur.com
-
-    Args:
-        in_gif (str): The file path to the image.
-    """
-    import subprocess
-
-    pkg_name = "imgur-uploader"
-    if not is_tool(pkg_name):
-        check_install(pkg_name)
-
-    try:
-        IMGUR_API_ID = os.environ.get("IMGUR_API_ID", None)
-        IMGUR_API_SECRET = os.environ.get("IMGUR_API_SECRET", None)
-        credentials_path = os.path.join(
-            os.path.expanduser("~"), ".config/imgur_uploader/uploader.cfg"
-        )
-
-        if (
-            (IMGUR_API_ID is not None) and (IMGUR_API_SECRET is not None)
-        ) or os.path.exists(credentials_path):
-
-            proc = subprocess.Popen(["imgur-uploader", in_gif], stdout=subprocess.PIPE)
-            for _ in range(0, 2):
-                line = proc.stdout.readline()
-                print(line.rstrip().decode("utf-8"))
-            # while True:
-            #     line = proc.stdout.readline()
-            #     if not line:
-            #         break
-            #     print(line.rstrip().decode("utf-8"))
-        else:
-            print(
-                "Imgur API credentials could not be found. Please check https://pypi.org/project/imgur-uploader/ for instructions on how to get Imgur API credentials"
-            )
             return
 
+        if verbose:
+            print(f"Downloading data from {url}\nPlease wait ...")
+        # Need to initialize r to something because of how we currently handle errors
+        # We should aim to refactor the code such that only one try block is needed
+        r = None
+        r = requests.get(url, stream=True, timeout=timeout, proxies=proxies)
+
+        if r.status_code != 200:
+            print("An error occurred while downloading.")
+            return
+
+        with open(filename_zip, "wb") as fd:
+            for chunk in r.iter_content(chunk_size=1024):
+                fd.write(chunk)
+
+    except Exception as e:
+        print("An error occurred while downloading.")
+        if r is not None:
+            print(r.json()["error"]["message"])
+        return
+
+    try:
+        if unzip:
+            with zipfile.ZipFile(filename_zip) as z:
+                z.extractall(os.path.dirname(filename))
+            os.remove(filename_zip)
+
+        if verbose:
+            if file_per_band:
+                print(f"Data downloaded to {os.path.dirname(filename)}")
+            else:
+                print(f"Data downloaded to {filename}")
     except Exception as e:
         print(e)
 
 
-########################################
-#           Color and Fonts            #
-########################################
-
-
-def rgb_to_hex(rgb=(255, 255, 255)):
-    """Converts RGB to hex color. In RGB color R stands for Red, G stands for Green, and B stands for Blue, and it ranges from the decimal value of 0 – 255.
-
-    Args:
-        rgb (tuple, optional): RGB color code as a tuple of (red, green, blue). Defaults to (255, 255, 255).
-
-    Returns:
-        str: hex color code
-    """
-    return "%02x%02x%02x" % rgb
-
-
-def hex_to_rgb(value="FFFFFF"):
-    """Converts hex color to RGB color.
+def ee_export_image_collection(
+    ee_object,
+    out_dir,
+    scale=None,
+    crs=None,
+    crs_transform=None,
+    region=None,
+    dimensions=None,
+    file_per_band=False,
+    format="ZIPPED_GEO_TIFF",
+    unmask_value=None,
+    filenames=None,
+    timeout=300,
+    proxies=None,
+    verbose=True,
+):
+    """Exports an ImageCollection as GeoTIFFs.
 
     Args:
-        value (str, optional): Hex color code as a string. Defaults to 'FFFFFF'.
-
-    Returns:
-        tuple: RGB color as a tuple.
-    """
-    value = value.lstrip("#")
-    lv = len(value)
-    return tuple(int(value[i : i + lv // 3], 16) for i in range(0, lv, lv // 3))
-
-
-def check_color(in_color):
-    """Checks the input color and returns the corresponding hex color code.
-
-    Args:
-        in_color (str or tuple): It can be a string (e.g., 'red', '#ffff00', 'ffff00', 'ff0') or RGB tuple (e.g., (255, 127, 0)).
-
-    Returns:
-        str: A hex color code.
-    """
-    import colour
-
-    out_color = "#000000"  # default black color
-    if isinstance(in_color, tuple) and len(in_color) == 3:
-
-        # rescale color if necessary
-        if all(isinstance(item, int) for item in in_color):
-            in_color = [c / 255.0 for c in in_color]
-
-        return colour.Color(rgb=tuple(in_color)).hex_l
-
-    else:
-
-        # try to guess the color system
-        try:
-            return colour.Color(in_color).hex_l
-
-        except Exception as e:
-            pass
-
-        # try again by adding an extra # (GEE handle hex codes without #)
-        try:
-            return colour.Color(f"#{in_color}").hex_l
-
-        except Exception as e:
-            print(
-                f"The provided color ({in_color}) is invalid. Using the default black color."
-            )
-            print(e)
-
-        return out_color
-
-
-def to_hex_colors(colors):
-    """Convert a GEE color palette into hexadecimal color codes. can handle mixin formats
-
-    Args:
-        colors (list): A list of hex color codes.
-
-    Returns:
-        list: A list of hex color codes prefixed with #.
+        ee_object (object): The ee.Image to download.
+        out_dir (str): The output directory for the exported images.
+        scale (float, optional): A default scale to use for any bands that do not specify one; ignored if crs and crs_transform is specified. Defaults to None.
+        crs (str, optional): A default CRS string to use for any bands that do not explicitly specify one. Defaults to None.
+        crs_transform (list, optional): a default affine transform to use for any bands that do not specify one, of the same format as the crs_transform of bands. Defaults to None.
+        region (object, optional): A polygon specifying a region to download; ignored if crs and crs_transform is specified. Defaults to None.
+        dimensions (list, optional): An optional array of two integers defining the width and height to which the band is cropped. Defaults to None.
+        file_per_band (bool, optional): Whether to produce a different GeoTIFF per band. Defaults to False.
+        format (str, optional):  One of: "ZIPPED_GEO_TIFF" (GeoTIFF file(s) wrapped in a zip file, default), "GEO_TIFF" (GeoTIFF file), "NPY" (NumPy binary format). If "GEO_TIFF" or "NPY",
+            filePerBand and all band-level transformations will be ignored. Loading a NumPy output results in a structured array.
+        unmask_value (float, optional): The value to use for pixels that are masked in the input image.
+            If the exported image contains zero values, you should set the unmask value to a  non-zero value so that the zero values are not treated as missing data. Defaults to None.
+        filenames (list | int, optional): A list of filenames to use for the exported images. Defaults to None.
+        timeout (int, optional): The timeout in seconds for the request. Defaults to 300.
+        proxies (dict, optional): A dictionary of proxy servers to use. Defaults to None.
+        verbose (bool, optional): Whether to print out descriptive text. Defaults to True.
     """
 
-    return [check_color(c) for c in colors]
+    if not isinstance(ee_object, ee.ImageCollection):
+        print("The ee_object must be an ee.ImageCollection.")
+        return
 
-
-def system_fonts(show_full_path=False):
-    """Gets a list of system fonts
-
-        # Common font locations:
-        # Linux: /usr/share/fonts/TTF/
-        # Windows: C:/Windows/Fonts
-        # macOS:  System > Library > Fonts
-
-    Args:
-        show_full_path (bool, optional): Whether to show the full path of each system font. Defaults to False.
-
-    Returns:
-        list: A list of system fonts.
-    """
-    try:
-        import matplotlib.font_manager
-
-        font_list = matplotlib.font_manager.findSystemFonts(
-            fontpaths=None, fontext="ttf"
-        )
-        font_list.sort()
-
-        font_names = [os.path.basename(f) for f in font_list]
-        font_names.sort()
-
-        if show_full_path:
-            return font_list
-        else:
-            return font_names
-
-    except Exception as e:
-        print(e)
-
-
-########################################
-#           Data Download              #
-########################################
-
-
-def download_from_url(url, out_file_name=None, out_dir=".", unzip=True, verbose=True):
-    """Download a file from a URL (e.g., https://github.com/giswqs/whitebox/raw/master/examples/testdata.zip)
-
-    Args:
-        url (str): The HTTP URL to download.
-        out_file_name (str, optional): The output file name to use. Defaults to None.
-        out_dir (str, optional): The output directory to use. Defaults to '.'.
-        unzip (bool, optional): Whether to unzip the downloaded file if it is a zip file. Defaults to True.
-        verbose (bool, optional): Whether to display or not the output of the function
-    """
-    in_file_name = os.path.basename(url)
-
-    if out_file_name is None:
-        out_file_name = in_file_name
-    out_file_path = os.path.join(os.path.abspath(out_dir), out_file_name)
-
-    if verbose:
-        print(f"Downloading {url} ...")
-
-    try:
-        urllib.request.urlretrieve(url, out_file_path)
-    except Exception:
-        raise Exception("The URL is invalid. Please double check the URL.")
-
-    final_path = out_file_path
-
-    if unzip:
-        # if it is a zip file
-        if ".zip" in out_file_name:
-            if verbose:
-                print(f"Unzipping {out_file_name} ...")
-            with zipfile.ZipFile(out_file_path, "r") as zip_ref:
-                zip_ref.extractall(out_dir)
-            final_path = os.path.join(
-                os.path.abspath(out_dir), out_file_name.replace(".zip", "")
-            )
-
-        # if it is a tar file
-        if ".tar" in out_file_name:
-            if verbose:
-                print(f"Unzipping {out_file_name} ...")
-            with tarfile.open(out_file_path, "r") as tar_ref:
-                tar_ref.extractall(out_dir)
-            final_path = os.path.join(
-                os.path.abspath(out_dir), out_file_name.replace(".tar", "")
-            )
-
-    if verbose:
-        print(f"Data downloaded to: {final_path}")
-
-    return
-
-
-def download_from_gdrive(gfile_url, file_name, out_dir=".", unzip=True, verbose=True):
-    """Download a file shared via Google Drive
-       (e.g., https://drive.google.com/file/d/18SUo_HcDGltuWYZs1s7PpOmOq_FvFn04/view?usp=sharing)
-
-    Args:
-        gfile_url (str): The Google Drive shared file URL
-        file_name (str): The output file name to use.
-        out_dir (str, optional): The output directory. Defaults to '.'.
-        unzip (bool, optional): Whether to unzip the output file if it is a zip file. Defaults to True.
-        verbose (bool, optional): Whether to display or not the output of the function
-    """
-    try:
-        from google_drive_downloader import GoogleDriveDownloader as gdd
-    except ImportError:
-        raise Exception(
-            "Please install the google_drive_downloader package using `pip install googledrivedownloader`"
-        )
-
-    file_id = gfile_url.split("/")[5]
-    if verbose:
-        print(f"Google Drive file id: {file_id}")
-
-    dest_path = os.path.join(out_dir, file_name)
-    gdd.download_file_from_google_drive(file_id, dest_path, True, unzip)
-
-    return
-
-
-def create_download_link(filename, title="Click here to download: "):
-    """Downloads a file from voila. Adopted from https://github.com/voila-dashboards/voila/issues/578
-
-    Args:
-        filename (str): The file path to the file to download
-        title (str, optional): str. Defaults to "Click here to download: ".
-
-    Returns:
-        str: HTML download URL.
-    """
-    import base64
-
-    from IPython.display import HTML
-
-    data = open(filename, "rb").read()
-    b64 = base64.b64encode(data)
-    payload = b64.decode()
-    basename = os.path.basename(filename)
-    html = '<a download="{filename}" href="data:text/csv;base64,{payload}" style="color:#0000FF;" target="_blank">{title}</a>'
-    html = html.format(payload=payload, title=title + f" {basename}", filename=basename)
-    return HTML(html)
-
-
-def edit_download_html(htmlWidget, filename, title="Click here to download: "):
-    """Downloads a file from voila. Adopted from https://github.com/voila-dashboards/voila/issues/578#issuecomment-617668058
-
-    Args:
-        htmlWidget (object): The HTML widget to display the URL.
-        filename (str): File path to download.
-        title (str, optional): Download description. Defaults to "Click here to download: ".
-    """
-
-    # from IPython.display import HTML
-    # import ipywidgets as widgets
-    import base64
-
-    # Change widget html temporarily to a font-awesome spinner
-    htmlWidget.value = '<i class="fa fa-spinner fa-spin fa-2x fa-fw"></i><span class="sr-only">Loading...</span>'
-
-    # Process raw data
-    data = open(filename, "rb").read()
-    b64 = base64.b64encode(data)
-    payload = b64.decode()
-
-    basename = os.path.basename(filename)
-
-    # Create and assign html to widget
-    html = '<a download="{filename}" href="data:text/csv;base64,{payload}" target="_blank">{title}</a>'
-    htmlWidget.value = html.format(
-        payload=payload, title=title + basename, filename=basename
-    )
-
-    # htmlWidget = widgets.HTML(value = '')
-    # htmlWidget
-
-
-########################################
-#           Data Conversion            #
-########################################
-
-
-def xy_to_points(in_csv, latitude="latitude", longitude="longitude", encoding="utf-8"):
-    """Converts a csv containing points (latitude and longitude) into an ee.FeatureCollection.
-
-    Args:
-        in_csv (str): File path or HTTP URL to the input csv file. For example, https://raw.githubusercontent.com/giswqs/data/main/world/world_cities.csv
-        latitude (str, optional): Column name for the latitude column. Defaults to 'latitude'.
-        longitude (str, optional): Column name for the longitude column. Defaults to 'longitude'.
-
-    Returns:
-        ee.FeatureCollection: The ee.FeatureCollection containing the points converted from the input csv.
-    """
-
-    geojson = csv_to_geojson(in_csv, None, latitude, longitude, encoding)
-    fc = geojson_to_ee(geojson)
-    return fc
-
-
-def csv_points_to_shp(in_csv, out_shp, latitude="latitude", longitude="longitude"):
-    """Converts a csv file containing points (latitude, longitude) into a shapefile.
-
-    Args:
-        in_csv (str): File path or HTTP URL to the input csv file. For example, https://raw.githubusercontent.com/giswqs/data/main/world/world_cities.csv
-        out_shp (str): File path to the output shapefile.
-        latitude (str, optional): Column name for the latitude column. Defaults to 'latitude'.
-        longitude (str, optional): Column name for the longitude column. Defaults to 'longitude'.
-
-    """
-    import whitebox
-
-    if in_csv.startswith("http") and in_csv.endswith(".csv"):
-        out_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-        out_name = os.path.basename(in_csv)
-
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-        download_from_url(in_csv, out_dir=out_dir, verbose=False)
-        in_csv = os.path.join(out_dir, out_name)
-
-    wbt = whitebox.WhiteboxTools()
-    in_csv = os.path.abspath(in_csv)
-    out_shp = os.path.abspath(out_shp)
-
-    if not os.path.exists(in_csv):
-        raise Exception("The provided csv file does not exist.")
-
-    with open(in_csv, encoding="utf-8") as csv_file:
-        reader = csv.DictReader(csv_file)
-        fields = reader.fieldnames
-        xfield = fields.index(longitude)
-        yfield = fields.index(latitude)
-
-    wbt.csv_points_to_vector(in_csv, out_shp, xfield=xfield, yfield=yfield, epsg=4326)
-
-
-def csv_to_shp(in_csv, out_shp, latitude="latitude", longitude="longitude"):
-    """Converts a csv file with latlon info to a point shapefile.
-
-    Args:
-        in_csv (str): The input csv file containing longitude and latitude columns.
-        out_shp (str): The file path to the output shapefile.
-        latitude (str, optional): The column name of the latitude column. Defaults to 'latitude'.
-        longitude (str, optional): The column name of the longitude column. Defaults to 'longitude'.
-    """
-    import shapefile as shp
-
-    if in_csv.startswith("http") and in_csv.endswith(".csv"):
-        out_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-        out_name = os.path.basename(in_csv)
-
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-        download_from_url(in_csv, out_dir=out_dir, verbose=False)
-        in_csv = os.path.join(out_dir, out_name)
-
-    out_dir = os.path.dirname(out_shp)
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
     try:
-        points = shp.Writer(out_shp, shapeType=shp.POINT)
-        with open(in_csv, encoding="utf-8-sig") as csvfile:
-            csvreader = csv.DictReader(csvfile)
-            header = csvreader.fieldnames
-            [points.field(field) for field in header]
-            for row in csvreader:
-                points.point((float(row[longitude])), (float(row[latitude])))
-                points.record(*tuple([row[f] for f in header]))
+        count = int(ee_object.size().getInfo())
+        if verbose:
+            print(f"Total number of images: {count}\n")
+
+        if filenames is None:
+            filenames = ee_object.aggregate_array("system:index").getInfo()
+        elif isinstance(filenames, int):
+            filenames = [str(f + filenames) for f in range(0, count)]
+
+        if len(filenames) != count:
+            raise Exception(
+                "The number of filenames must be equal to the number of images."
+            )
+
+        filenames = [str(f) + ".tif" for f in filenames if not str(f).endswith(".tif")]
+
+        for i in range(0, count):
+            image = ee.Image(ee_object.toList(count).get(i))
+            filename = os.path.join(out_dir, filenames[i])
+            if verbose:
+                print(f"Exporting {i + 1}/{count}: {filename}")
+            ee_export_image(
+                image,
+                filename=filename,
+                scale=scale,
+                crs=crs,
+                crs_transform=crs_transform,
+                region=region,
+                dimensions=dimensions,
+                file_per_band=file_per_band,
+                format=format,
+                unmask_value=unmask_value,
+                timeout=timeout,
+                proxies=proxies,
+            )
+            print("\n")
 
-        out_prj = out_shp.replace(".shp", ".prj")
-        with open(out_prj, "w") as f:
-            prj_str = 'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",0.0174532925199433]] '
-            f.write(prj_str)
-
-    except Exception as e:
-        raise Exception(e)
-
-
-def csv_to_geojson(
-    in_csv,
-    out_geojson=None,
-    latitude="latitude",
-    longitude="longitude",
-    encoding="utf-8",
-):
-    """Creates points for a CSV file and exports data as a GeoJSON.
-
-    Args:
-        in_csv (str): The file path to the input CSV file.
-        out_geojson (str): The file path to the exported GeoJSON. Default to None.
-        latitude (str, optional): The name of the column containing latitude coordinates. Defaults to "latitude".
-        longitude (str, optional): The name of the column containing longitude coordinates. Defaults to "longitude".
-        encoding (str, optional): The encoding of characters. Defaults to "utf-8".
-
-    """
-
-    import pandas as pd
-
-    if out_geojson is not None:
-        out_dir = os.path.dirname(os.path.abspath(out_geojson))
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-
-    df = pd.read_csv(in_csv)
-    geojson = pandas_to_geojson(
-        df, latitude=latitude, longitude=longitude, encoding=encoding
-    )
-
-    if out_geojson is None:
-        return geojson
-    else:
-        with open(out_geojson, "w", encoding=encoding) as f:
-            f.write(json.dumps(geojson))
-
-
-def pandas_to_geojson(
-    df,
-    out_geojson=None,
-    latitude="latitude",
-    longitude="longitude",
-    encoding="utf-8",
-):
-    """Creates points for a Pandas DataFrame and exports data as a GeoJSON.
-
-    Args:
-        df (pandas.DataFrame): The input Pandas DataFrame.
-        out_geojson (str): The file path to the exported GeoJSON. Default to None.
-        latitude (str, optional): The name of the column containing latitude coordinates. Defaults to "latitude".
-        longitude (str, optional): The name of the column containing longitude coordinates. Defaults to "longitude".
-        encoding (str, optional): The encoding of characters. Defaults to "utf-8".
-
-    """
-
-    from geojson import Feature, FeatureCollection, Point
-
-    if out_geojson is not None:
-        out_dir = os.path.dirname(os.path.abspath(out_geojson))
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-
-    features = df.apply(
-        lambda row: Feature(
-            geometry=Point((float(row[longitude]), float(row[latitude]))),
-            properties=dict(row),
-        ),
-        axis=1,
-    ).tolist()
-
-    geojson = FeatureCollection(features=features)
-
-    if out_geojson is None:
-        return geojson
-    else:
-        with open(out_geojson, "w", encoding=encoding) as f:
-            f.write(json.dumps(geojson))
-
-
-def csv_to_ee(
-    in_csv, latitude="latitude", longitude="longitude", encoding="utf-8", geodesic=True
-):
-    """Creates points for a CSV file and exports data as a GeoJSON.
-
-    Args:
-        in_csv (str): The file path to the input CSV file.
-        latitude (str, optional): The name of the column containing latitude coordinates. Defaults to "latitude".
-        longitude (str, optional): The name of the column containing longitude coordinates. Defaults to "longitude".
-        encoding (str, optional): The encoding of characters. Defaults to "utf-8".
-        geodesic (bool, optional): Whether line segments should be interpreted as spherical geodesics. If false, indicates that line segments should be interpreted as planar lines in the specified CRS. If absent, defaults to true if the CRS is geographic (including the default EPSG:4326), or to false if the CRS is projected.
-
-    Returns:
-        ee_object: An ee.Geometry object
-    """
-
-    geojson = csv_to_geojson(
-        in_csv, latitude=latitude, longitude=longitude, encoding=encoding
-    )
-    fc = geojson_to_ee(geojson, geodesic=geodesic)
-    return fc
-
-
-def csv_to_gdf(in_csv, latitude="latitude", longitude="longitude", encoding="utf-8"):
-    """Creates points for a CSV file and converts them to a GeoDataFrame.
-
-    Args:
-        in_csv (str): The file path to the input CSV file.
-        latitude (str, optional): The name of the column containing latitude coordinates. Defaults to "latitude".
-        longitude (str, optional): The name of the column containing longitude coordinates. Defaults to "longitude".
-        encoding (str, optional): The encoding of characters. Defaults to "utf-8".
-
-    Returns:
-        object: GeoDataFrame.
-    """
-
-    check_package(name="geopandas", URL="https://geopandas.org")
-
-    import geopandas as gpd
-
-    out_dir = os.getcwd()
-
-    out_geojson = os.path.join(out_dir, random_string() + ".geojson")
-    csv_to_geojson(in_csv, out_geojson, latitude, longitude, encoding)
-
-    gdf = gpd.read_file(out_geojson)
-    os.remove(out_geojson)
-    return gdf
-
-
-csv_to_geopandas = csv_to_gdf
-
-
-def geojson_to_ee(geo_json, geodesic=False, encoding="utf-8"):
-    """Converts a geojson to ee.Geometry()
-
-    Args:
-        geo_json (dict): A geojson geometry dictionary or file path.
-        geodesic (bool, optional): Whether line segments should be interpreted as spherical geodesics. If false, indicates that line segments should be interpreted as planar lines in the specified CRS. If absent, defaults to true if the CRS is geographic (including the default EPSG:4326), or to false if the CRS is projected. Defaults to False.
-        encoding (str, optional): The encoding of characters. Defaults to "utf-8".
-
-    Returns:
-        ee_object: An ee.Geometry object
-    """
-
-    try:
-
-        if isinstance(geo_json, str):
-            if geo_json.startswith("http") and geo_json.endswith(".geojson"):
-                out_geojson = temp_file_path(extension=".geojson")
-                download_from_url(geo_json, out_geojson, verbose=False)
-                with open(out_geojson, "r", encoding=encoding) as f:
-                    geo_json = json.loads(f.read())
-                os.remove(out_geojson)
-
-            elif os.path.isfile(geo_json):
-                with open(os.path.abspath(geo_json), encoding=encoding) as f:
-                    geo_json = json.load(f)
-
-        # geo_json["geodesic"] = geodesic
-        if geo_json["type"] == "FeatureCollection":
-            for feature in geo_json["features"]:
-                if feature["geometry"]["type"] != "Point":
-                    feature["geometry"]["geodesic"] = geodesic
-            features = ee.FeatureCollection(geo_json)
-            return features
-        elif geo_json["type"] == "Feature":
-            geom = None
-            keys = geo_json["properties"]["style"].keys()
-            if "radius" in keys:  # Checks whether it is a circle
-                geom = ee.Geometry(geo_json["geometry"])
-                radius = geo_json["properties"]["style"]["radius"]
-                geom = geom.buffer(radius)
-            elif (
-                geo_json["geometry"]["type"] == "Point"
-            ):  # Checks whether it is a point
-                coordinates = geo_json["geometry"]["coordinates"]
-                longitude = coordinates[0]
-                latitude = coordinates[1]
-                geom = ee.Geometry.Point(longitude, latitude)
-            else:
-                geom = ee.Geometry(geo_json["geometry"], "", geodesic)
-            return geom
-        else:
-            raise Exception("Could not convert the geojson to ee.Geometry()")
-
-    except Exception as e:
-        print("Could not convert the geojson to ee.Geometry()")
-        raise Exception(e)
-
-
-def ee_to_geojson(ee_object, filename=None, indent=2, **kwargs):
-    """Converts Earth Engine object to geojson.
-
-    Args:
-        ee_object (object): An Earth Engine object.
-        filename (str, optional): The file path to save the geojson. Defaults to None.
-
-    Returns:
-        object: GeoJSON object.
-    """
-    # from json import dumps
-
-    # ee_initialize()
-
-    try:
-        if (
-            isinstance(ee_object, ee.geometry.Geometry)
-            or isinstance(ee_object, ee.feature.Feature)
-            or isinstance(ee_object, ee.featurecollection.FeatureCollection)
-        ):
-            json_object = ee_object.getInfo()
-            if filename is not None:
-                filename = os.path.abspath(filename)
-                if not os.path.exists(os.path.dirname(filename)):
-                    os.makedirs(os.path.dirname(filename))
-                with open(filename, "w") as geojson:
-                    geojson.write(
-                        json.dumps(json_object, indent=indent, **kwargs) + "\n"
-                    )
-            else:
-                return json_object
-        else:
-            print("Could not convert the Earth Engine object to geojson")
-    except Exception as e:
-        raise Exception(e)
-
-
-def shp_to_geojson(in_shp, filename=None, **kwargs):
-    """Converts a shapefile to GeoJSON.
-
-    Args:
-        in_shp (str): File path of the input shapefile.
-        filename (str, optional): File path of the output GeoJSON. Defaults to None.
-
-    Returns:
-        object: The json object representing the shapefile.
-    """
-    try:
-        import shapefile
-
-        # from datetime import date
-
-        in_shp = os.path.abspath(in_shp)
-
-        if filename is not None:
-            ext = os.path.splitext(filename)[1]
-            print(ext)
-            if ext.lower() not in [".json", ".geojson"]:
-                raise TypeError("The output file extension must the .json or .geojson.")
-
-            if not os.path.exists(os.path.dirname(filename)):
-                os.makedirs(os.path.dirname(filename))
-
-        if not is_GCS(in_shp):
-            try:
-                import geopandas as gpd
-
-            except Exception:
-                raise ImportError(
-                    "Geopandas is required to perform reprojection of the data. See https://geopandas.org/install.html"
-                )
-
-            try:
-                in_gdf = gpd.read_file(in_shp)
-                out_gdf = in_gdf.to_crs(epsg="4326")
-                out_shp = in_shp.replace(".shp", "_gcs.shp")
-                out_gdf.to_file(out_shp)
-                in_shp = out_shp
-            except Exception as e:
-                raise Exception(e)
-
-        if "encoding" in kwargs:
-            reader = shapefile.Reader(in_shp, encoding=kwargs.pop("encoding"))
-        else:
-            reader = shapefile.Reader(in_shp)
-        out_dict = reader.__geo_interface__
-        # fields = reader.fields[1:]
-        # field_names = [field[0] for field in fields]
-        # # pyShp returns dates as `datetime.date` or as `bytes` when they are empty
-        # # This is not JSON compatible, so we keep track of them to convert them to str
-        # date_fields_names = [field[0] for field in fields if field[1] == "D"]
-        # buffer = []
-        # for sr in reader.shapeRecords():
-        #     atr = dict(zip(field_names, sr.record))
-        #     for date_field in date_fields_names:
-        #         value = atr[date_field]
-        #         # convert date to string, similar to pyShp writing
-        #         # https://github.com/GeospatialPython/pyshp/blob/69c60f6d07c329f7d3ac2cba79bc03643bd424d8/shapefile.py#L1814
-        #         if isinstance(value, date):
-        #             value = "{:04d}{:02d}{:02d}".format(
-        #                 value.year, value.month, value.day
-        #             )
-        #         elif not value:  # empty bytes string
-        #             value = "0" * 8  # QGIS NULL for date type
-        #         atr[date_field] = value
-        #     geom = sr.shape.__geo_interface__
-        #     buffer.append(dict(type="Feature", geometry=geom, properties=atr))
-
-        # out_dict = {"type": "FeatureCollection", "features": buffer}
-
-        if filename is not None:
-            # from json import dumps
-
-            with open(filename, "w") as geojson:
-                geojson.write(json.dumps(out_dict, indent=2) + "\n")
-        else:
-            return out_dict
-
-    except Exception as e:
-        raise Exception(e)
-
-
-def shp_to_ee(in_shp, **kwargs):
-    """Converts a shapefile to Earth Engine objects. Note that the CRS of the shapefile must be EPSG:4326
-
-    Args:
-        in_shp (str): File path to a shapefile.
-
-    Returns:
-        object: Earth Engine objects representing the shapefile.
-    """
-    # ee_initialize()
-    try:
-        if "encoding" in kwargs:
-            json_data = shp_to_geojson(in_shp, encoding=kwargs.pop("encoding"))
-        else:
-            json_data = shp_to_geojson(in_shp)
-        ee_object = geojson_to_ee(json_data)
-        return ee_object
     except Exception as e:
         print(e)
 
 
-########################################
-#              Export Data             #
-########################################
-
-
-def filter_polygons(ftr):
-    """Converts GeometryCollection to Polygon/MultiPolygon
+def ee_export_image_to_drive(
+    image,
+    description="myExportImageTask",
+    folder=None,
+    fileNamePrefix=None,
+    dimensions=None,
+    region=None,
+    scale=None,
+    crs=None,
+    crsTransform=None,
+    maxPixels=None,
+    shardSize=None,
+    fileDimensions=None,
+    skipEmptyTiles=None,
+    fileFormat=None,
+    formatOptions=None,
+    **kwargs,
+):
+    """Creates a batch task to export an Image as a raster to Google Drive.
 
     Args:
-        ftr (object): ee.Feature
-
-    Returns:
-        object: ee.Feature
+        image: The image to be exported.
+        description: Human-readable name of the task.
+        folder: The name of a unique folder in your Drive account to
+            export into. Defaults to the root of the drive.
+        fileNamePrefix: The Google Drive filename for the export.
+            Defaults to the name of the task.
+        dimensions: The dimensions of the exported image. Takes either a
+            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
+            where WIDTH and HEIGHT are each positive integers.
+        region: The lon,lat coordinates for a LinearRing or Polygon
+            specifying the region to export. Can be specified as a nested
+            lists of numbers or a serialized string. Defaults to the image's
+            region.
+        scale: The resolution in meters per pixel. Defaults to the
+            native resolution of the image asset unless a crsTransform
+            is specified.
+        crs: The coordinate reference system of the exported image's
+            projection. Defaults to the image's default projection.
+        crsTransform: A comma-separated string of 6 numbers describing
+            the affine transform of the coordinate reference system of the
+            exported image's projection, in the order: xScale, xShearing,
+            xTranslation, yShearing, yScale and yTranslation. Defaults to
+            the image's native CRS transform.
+        maxPixels: The maximum allowed number of pixels in the exported
+            image. The task will fail if the exported region covers more
+            pixels in the specified projection. Defaults to 100,000,000.
+        shardSize: Size in pixels of the tiles in which this image will be
+            computed. Defaults to 256.
+        fileDimensions: The dimensions in pixels of each image file, if the
+            image is too large to fit in a single file. May specify a
+            single number to indicate a square shape, or a tuple of two
+            dimensions to indicate (width,height). Note that the image will
+            still be clipped to the overall image dimensions. Must be a
+            multiple of shardSize.
+        skipEmptyTiles: If true, skip writing empty (i.e. fully-masked)
+            image tiles. Defaults to false.
+        fileFormat: The string file format to which the image is exported.
+            Currently only 'GeoTIFF' and 'TFRecord' are supported, defaults to
+            'GeoTIFF'.
+        formatOptions: A dictionary of string keys to format specific options.
+        **kwargs: Holds other keyword arguments that may have been deprecated
+            such as 'crs_transform', 'driveFolder', and 'driveFileNamePrefix'.
     """
-    # ee_initialize()
-    geometries = ftr.geometry().geometries()
-    geometries = geometries.map(
-        lambda geo: ee.Feature(ee.Geometry(geo)).set("geoType", ee.Geometry(geo).type())
-    )
 
-    polygons = (
-        ee.FeatureCollection(geometries)
-        .filter(ee.Filter.eq("geoType", "Polygon"))
-        .geometry()
+    if not isinstance(image, ee.Image):
+        raise ValueError("Input image must be an instance of ee.Image")
+
+    task = ee.batch.Export.image.toDrive(
+        image,
+        description,
+        folder,
+        fileNamePrefix,
+        dimensions,
+        region,
+        scale,
+        crs,
+        crsTransform,
+        maxPixels,
+        shardSize,
+        fileDimensions,
+        skipEmptyTiles,
+        fileFormat,
+        formatOptions,
+        **kwargs,
     )
-    return ee.Feature(polygons).copyProperties(ftr)
+    task.start()
+
+
+def ee_export_image_to_asset(
+    image,
+    description="myExportImageTask",
+    assetId=None,
+    pyramidingPolicy=None,
+    dimensions=None,
+    region=None,
+    scale=None,
+    crs=None,
+    crsTransform=None,
+    maxPixels=None,
+    **kwargs,
+):
+    """Creates a task to export an EE Image to an EE Asset.
+
+    Args:
+        image: The image to be exported.
+        description: Human-readable name of the task.
+        assetId: The destination asset ID.
+        pyramidingPolicy: The pyramiding policy to apply to each band in the
+            image, a dictionary keyed by band name. Values must be
+            one of: "mean", "sample", "min", "max", or "mode".
+            Defaults to "mean". A special key, ".default", may be used to
+            change the default for all bands.
+        dimensions: The dimensions of the exported image. Takes either a
+            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
+            where WIDTH and HEIGHT are each positive integers.
+        region: The lon,lat coordinates for a LinearRing or Polygon
+            specifying the region to export. Can be specified as a nested
+            lists of numbers or a serialized string. Defaults to the image's
+            region.
+        scale: The resolution in meters per pixel. Defaults to the
+            native resolution of the image asset unless a crsTransform
+            is specified.
+        crs: The coordinate reference system of the exported image's
+            projection. Defaults to the image's default projection.
+        crsTransform: A comma-separated string of 6 numbers describing
+            the affine transform of the coordinate reference system of the
+            exported image's projection, in the order: xScale, xShearing,
+            xTranslation, yShearing, yScale and yTranslation. Defaults to
+            the image's native CRS transform.
+        maxPixels: The maximum allowed number of pixels in the exported
+            image. The task will fail if the exported region covers more
+            pixels in the specified projection. Defaults to 100,000,000.
+        **kwargs: Holds other keyword arguments that may have been deprecated
+            such as 'crs_transform'.
+    """
+
+    if isinstance(image, ee.Image) or isinstance(image, ee.image.Image):
+        pass
+    else:
+        raise ValueError("Input image must be an instance of ee.Image")
+
+    if isinstance(assetId, str):
+        if assetId.startswith("users/") or assetId.startswith("projects/"):
+            pass
+        else:
+            assetId = f"{ee_user_id()}/{assetId}"
+
+    task = ee.batch.Export.image.toAsset(
+        image,
+        description,
+        assetId,
+        pyramidingPolicy,
+        dimensions,
+        region,
+        scale,
+        crs,
+        crsTransform,
+        maxPixels,
+        **kwargs,
+    )
+    task.start()
+
+
+def ee_export_image_to_cloud_storage(
+    image,
+    description="myExportImageTask",
+    bucket=None,
+    fileNamePrefix=None,
+    dimensions=None,
+    region=None,
+    scale=None,
+    crs=None,
+    crsTransform=None,
+    maxPixels=None,
+    shardSize=None,
+    fileDimensions=None,
+    skipEmptyTiles=None,
+    fileFormat=None,
+    formatOptions=None,
+    **kwargs,
+):
+    """Creates a task to export an EE Image to Google Cloud Storage.
+
+    Args:
+        image: The image to be exported.
+        description: Human-readable name of the task.
+        bucket: The name of a Cloud Storage bucket for the export.
+        fileNamePrefix: Cloud Storage object name prefix for the export.
+            Defaults to the name of the task.
+        dimensions: The dimensions of the exported image. Takes either a
+            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
+            where WIDTH and HEIGHT are each positive integers.
+        region: The lon,lat coordinates for a LinearRing or Polygon
+            specifying the region to export. Can be specified as a nested
+            lists of numbers or a serialized string. Defaults to the image's
+            region.
+        scale: The resolution in meters per pixel. Defaults to the
+            native resolution of the image asset unless a crsTransform
+            is specified.
+        crs: The coordinate reference system of the exported image's
+            projection. Defaults to the image's default projection.
+        crsTransform: A comma-separated string of 6 numbers describing
+            the affine transform of the coordinate reference system of the
+            exported image's projection, in the order: xScale, xShearing,
+            xTranslation, yShearing, yScale and yTranslation. Defaults to
+            the image's native CRS transform.
+        maxPixels: The maximum allowed number of pixels in the exported
+            image. The task will fail if the exported region covers more
+            pixels in the specified projection. Defaults to 100,000,000.
+        shardSize: Size in pixels of the tiles in which this image will be
+            computed. Defaults to 256.
+        fileDimensions: The dimensions in pixels of each image file, if the
+            image is too large to fit in a single file. May specify a
+            single number to indicate a square shape, or a tuple of two
+            dimensions to indicate (width,height). Note that the image will
+            still be clipped to the overall image dimensions. Must be a
+            multiple of shardSize.
+        skipEmptyTiles: If true, skip writing empty (i.e. fully-masked)
+            image tiles. Defaults to false.
+        fileFormat: The string file format to which the image is exported.
+            Currently only 'GeoTIFF' and 'TFRecord' are supported, defaults to
+            'GeoTIFF'.
+        formatOptions: A dictionary of string keys to format specific options.
+        **kwargs: Holds other keyword arguments that may have been deprecated
+            such as 'crs_transform'.
+    """
+
+    if not isinstance(image, ee.Image):
+        raise ValueError("Input image must be an instance of ee.Image")
+
+    try:
+        task = ee.batch.Export.image.toCloudStorage(
+            image,
+            description,
+            bucket,
+            fileNamePrefix,
+            dimensions,
+            region,
+            scale,
+            crs,
+            crsTransform,
+            maxPixels,
+            shardSize,
+            fileDimensions,
+            skipEmptyTiles,
+            fileFormat,
+            formatOptions,
+            **kwargs,
+        )
+        task.start()
+    except Exception as e:
+        print(e)
+
+
+def ee_export_image_collection_to_drive(
+    ee_object,
+    descriptions=None,
+    folder=None,
+    fileNamePrefix=None,
+    dimensions=None,
+    region=None,
+    scale=None,
+    crs=None,
+    crsTransform=None,
+    maxPixels=None,
+    shardSize=None,
+    fileDimensions=None,
+    skipEmptyTiles=None,
+    fileFormat=None,
+    formatOptions=None,
+    **kwargs,
+):
+    """Creates a batch task to export an ImageCollection as raster images to Google Drive.
+
+    Args:
+        ee_object: The image collection to export.
+        descriptions: A list of human-readable names of the tasks.
+        folder: The name of a unique folder in your Drive account to
+            export into. Defaults to the root of the drive.
+        fileNamePrefix: The Google Drive filename for the export.
+            Defaults to the name of the task.
+        dimensions: The dimensions of the exported image. Takes either a
+            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
+            where WIDTH and HEIGHT are each positive integers.
+        region: The lon,lat coordinates for a LinearRing or Polygon
+            specifying the region to export. Can be specified as a nested
+            lists of numbers or a serialized string. Defaults to the image's
+            region.
+        scale: The resolution in meters per pixel. Defaults to the
+            native resolution of the image asset unless a crsTransform
+            is specified.
+        crs: The coordinate reference system of the exported image's
+            projection. Defaults to the image's default projection.
+        crsTransform: A comma-separated string of 6 numbers describing
+            the affine transform of the coordinate reference system of the
+            exported image's projection, in the order: xScale, xShearing,
+            xTranslation, yShearing, yScale and yTranslation. Defaults to
+            the image's native CRS transform.
+        maxPixels: The maximum allowed number of pixels in the exported
+            image. The task will fail if the exported region covers more
+            pixels in the specified projection. Defaults to 100,000,000.
+        shardSize: Size in pixels of the tiles in which this image will be
+            computed. Defaults to 256.
+        fileDimensions: The dimensions in pixels of each image file, if the
+            image is too large to fit in a single file. May specify a
+            single number to indicate a square shape, or a tuple of two
+            dimensions to indicate (width,height). Note that the image will
+            still be clipped to the overall image dimensions. Must be a
+            multiple of shardSize.
+        skipEmptyTiles: If true, skip writing empty (i.e. fully-masked)
+            image tiles. Defaults to false.
+        fileFormat: The string file format to which the image is exported.
+            Currently only 'GeoTIFF' and 'TFRecord' are supported, defaults to
+            'GeoTIFF'.
+        formatOptions: A dictionary of string keys to format specific options.
+        **kwargs: Holds other keyword arguments that may have been deprecated
+            such as 'crs_transform', 'driveFolder', and 'driveFileNamePrefix'.
+    """
+
+    if not isinstance(ee_object, ee.ImageCollection):
+        raise ValueError("The ee_object must be an ee.ImageCollection.")
+
+    try:
+        count = int(ee_object.size().getInfo())
+        print(f"Total number of images: {count}\n")
+
+        if (descriptions is not None) and (len(descriptions) != count):
+            raise ValueError(
+                "The number of descriptions is not equal to the number of images."
+            )
+
+        if descriptions is None:
+            descriptions = ee_object.aggregate_array("system:index").getInfo()
+
+        images = ee_object.toList(count)
+
+        if os.environ.get("USE_MKDOCS") is not None:  # skip if running GitHub CI.
+            return
+
+        for i in range(0, count):
+            image = ee.Image(images.get(i))
+            description = descriptions[i]
+            ee_export_image_to_drive(
+                image,
+                description,
+                folder,
+                fileNamePrefix,
+                dimensions,
+                region,
+                scale,
+                crs,
+                crsTransform,
+                maxPixels,
+                shardSize,
+                fileDimensions,
+                skipEmptyTiles,
+                fileFormat,
+                formatOptions,
+                **kwargs,
+            )
+
+    except Exception as e:
+        print(e)
+
+
+def ee_export_image_collection_to_asset(
+    ee_object,
+    descriptions=None,
+    assetIds=None,
+    pyramidingPolicy=None,
+    dimensions=None,
+    region=None,
+    scale=None,
+    crs=None,
+    crsTransform=None,
+    maxPixels=None,
+    **kwargs,
+):
+    """Creates a batch task to export an ImageCollection as raster images to Google Drive.
+
+    Args:
+        ee_object: The image collection to export.
+        descriptions: A list of human-readable names of the tasks.
+        assetIds: The destination asset ID.
+        pyramidingPolicy: The pyramiding policy to apply to each band in the
+            image, a dictionary keyed by band name. Values must be
+            one of: "mean", "sample", "min", "max", or "mode".
+            Defaults to "mean". A special key, ".default", may be used to
+            change the default for all bands.
+        dimensions: The dimensions of the exported image. Takes either a
+            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
+            where WIDTH and HEIGHT are each positive integers.
+        region: The lon,lat coordinates for a LinearRing or Polygon
+            specifying the region to export. Can be specified as a nested
+            lists of numbers or a serialized string. Defaults to the image's
+            region.
+        scale: The resolution in meters per pixel. Defaults to the
+            native resolution of the image asset unless a crsTransform
+            is specified.
+        crs: The coordinate reference system of the exported image's
+            projection. Defaults to the image's default projection.
+        crsTransform: A comma-separated string of 6 numbers describing
+            the affine transform of the coordinate reference system of the
+            exported image's projection, in the order: xScale, xShearing,
+            xTranslation, yShearing, yScale and yTranslation. Defaults to
+            the image's native CRS transform.
+        maxPixels: The maximum allowed number of pixels in the exported
+            image. The task will fail if the exported region covers more
+            pixels in the specified projection. Defaults to 100,000,000.
+        **kwargs: Holds other keyword arguments that may have been deprecated
+            such as 'crs_transform'.
+    """
+
+    if not isinstance(ee_object, ee.ImageCollection):
+        raise ValueError("The ee_object must be an ee.ImageCollection.")
+
+    try:
+        count = int(ee_object.size().getInfo())
+        print(f"Total number of images: {count}\n")
+
+        if (descriptions is not None) and (len(descriptions) != count):
+            print("The number of descriptions is not equal to the number of images.")
+            return
+
+        if descriptions is None:
+            descriptions = ee_object.aggregate_array("system:index").getInfo()
+
+        if assetIds is None:
+            assetIds = descriptions
+
+        images = ee_object.toList(count)
+
+        if os.environ.get("USE_MKDOCS") is not None:  # skip if running GitHub CI.
+            return
+
+        for i in range(0, count):
+            image = ee.Image(images.get(i))
+            description = descriptions[i]
+            assetId = assetIds[i]
+            ee_export_image_to_asset(
+                image,
+                description,
+                assetId,
+                pyramidingPolicy,
+                dimensions,
+                region,
+                scale,
+                crs,
+                crsTransform,
+                maxPixels,
+                **kwargs,
+            )
+
+    except Exception as e:
+        print(e)
+
+
+def ee_export_image_collection_to_cloud_storage(
+    ee_object,
+    descriptions=None,
+    bucket=None,
+    fileNamePrefix=None,
+    dimensions=None,
+    region=None,
+    scale=None,
+    crs=None,
+    crsTransform=None,
+    maxPixels=None,
+    shardSize=None,
+    fileDimensions=None,
+    skipEmptyTiles=None,
+    fileFormat=None,
+    formatOptions=None,
+    **kwargs,
+):
+    """Creates a batch task to export an ImageCollection as raster images to a Google Cloud bucket.
+
+    Args:
+        ee_object: The image collection to export.
+        descriptions: A list of human-readable names of the tasks.
+        bucket: The name of a Cloud Storage bucket for the export.
+        fileNamePrefix: Cloud Storage object name prefix for the export.
+            Defaults to the name of the task.
+        dimensions: The dimensions of the exported image. Takes either a
+            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
+            where WIDTH and HEIGHT are each positive integers.
+        region: The lon,lat coordinates for a LinearRing or Polygon
+            specifying the region to export. Can be specified as a nested
+            lists of numbers or a serialized string. Defaults to the image's
+            region.
+        scale: The resolution in meters per pixel. Defaults to the
+            native resolution of the image asset unless a crsTransform
+            is specified.
+        crs: The coordinate reference system of the exported image's
+            projection. Defaults to the image's default projection.
+        crsTransform: A comma-separated string of 6 numbers describing
+            the affine transform of the coordinate reference system of the
+            exported image's projection, in the order: xScale, xShearing,
+            xTranslation, yShearing, yScale and yTranslation. Defaults to
+            the image's native CRS transform.
+        maxPixels: The maximum allowed number of pixels in the exported
+            image. The task will fail if the exported region covers more
+            pixels in the specified projection. Defaults to 100,000,000.
+        shardSize: Size in pixels of the tiles in which this image will be
+            computed. Defaults to 256.
+        fileDimensions: The dimensions in pixels of each image file, if the
+            image is too large to fit in a single file. May specify a
+            single number to indicate a square shape, or a tuple of two
+            dimensions to indicate (width,height). Note that the image will
+            still be clipped to the overall image dimensions. Must be a
+            multiple of shardSize.
+        skipEmptyTiles: If true, skip writing empty (i.e. fully-masked)
+            image tiles. Defaults to false.
+        fileFormat: The string file format to which the image is exported.
+            Currently only 'GeoTIFF' and 'TFRecord' are supported, defaults to
+            'GeoTIFF'.
+        formatOptions: A dictionary of string keys to format specific options.
+        **kwargs: Holds other keyword arguments that may have been deprecated
+            such as 'crs_transform'.
+    """
+
+    if not isinstance(ee_object, ee.ImageCollection):
+        raise ValueError("The ee_object must be an ee.ImageCollection.")
+
+    try:
+        count = int(ee_object.size().getInfo())
+        print(f"Total number of images: {count}\n")
+
+        if (descriptions is not None) and (len(descriptions) != count):
+            print("The number of descriptions is not equal to the number of images.")
+            return
+
+        if descriptions is None:
+            descriptions = ee_object.aggregate_array("system:index").getInfo()
+
+        images = ee_object.toList(count)
+
+        if os.environ.get("USE_MKDOCS") is not None:  # skip if running GitHub CI.
+            return
+
+        for i in range(0, count):
+            image = ee.Image(images.get(i))
+            description = descriptions[i]
+            ee_export_image_to_cloud_storage(
+                image,
+                description,
+                bucket,
+                fileNamePrefix,
+                dimensions,
+                region,
+                scale,
+                crs,
+                crsTransform,
+                maxPixels,
+                shardSize,
+                fileDimensions,
+                skipEmptyTiles,
+                fileFormat,
+                formatOptions,
+                **kwargs,
+            )
+
+    except Exception as e:
+        print(e)
+
+
+def ee_export_geojson(
+    ee_object, filename=None, selectors=None, timeout=300, proxies=None
+):
+    """Exports Earth Engine FeatureCollection to geojson.
+
+    Args:
+        ee_object (object): ee.FeatureCollection to export.
+        filename (str): Output file name. Defaults to None.
+        selectors (list, optional): A list of attributes to export. Defaults to None.
+        timeout (int, optional): Timeout in seconds. Defaults to 300 seconds.
+        proxies (dict, optional): Proxy settings. Defaults to None.
+    """
+
+    if not isinstance(ee_object, ee.FeatureCollection):
+        print("The ee_object must be an ee.FeatureCollection.")
+        return
+
+    if filename is None:
+        out_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+        filename = os.path.join(out_dir, random_string(6) + ".geojson")
+
+    allowed_formats = ["geojson"]
+    filename = os.path.abspath(filename)
+    basename = os.path.basename(filename)
+    name = os.path.splitext(basename)[0]
+    filetype = os.path.splitext(basename)[1][1:].lower()
+
+    if not (filetype.lower() in allowed_formats):
+        print("The output file type must be geojson.")
+        return
+
+    if selectors is None:
+        selectors = ee_object.first().propertyNames().getInfo()
+        selectors = [".geo"] + selectors
+
+    elif not isinstance(selectors, list):
+        print("selectors must be a list, such as ['attribute1', 'attribute2']")
+        return
+    else:
+        allowed_attributes = ee_object.first().propertyNames().getInfo()
+        for attribute in selectors:
+            if not (attribute in allowed_attributes):
+                print(
+                    "Attributes must be one chosen from: {} ".format(
+                        ", ".join(allowed_attributes)
+                    )
+                )
+                return
+
+    try:
+        # print('Generating URL ...')
+        url = ee_object.getDownloadURL(
+            filetype=filetype, selectors=selectors, filename=name
+        )
+        # print('Downloading data from {}\nPlease wait ...'.format(url))
+        r = None
+        r = requests.get(url, stream=True, timeout=timeout, proxies=proxies)
+
+        if r.status_code != 200:
+            print("An error occurred while downloading. \n Retrying ...")
+            try:
+                new_ee_object = ee_object.map(filter_polygons)
+                print("Generating URL ...")
+                url = new_ee_object.getDownloadURL(
+                    filetype=filetype, selectors=selectors, filename=name
+                )
+                print(f"Downloading data from {url}\nPlease wait ...")
+                r = requests.get(url, stream=True, timeout=timeout, proxies=proxies)
+            except Exception as e:
+                print(e)
+
+        with open(filename, "wb") as fd:
+            for chunk in r.iter_content(chunk_size=1024):
+                fd.write(chunk)
+    except Exception as e:
+        print("An error occurred while downloading.")
+        if r is not None:
+            print(r.json()["error"]["message"])
+
+        return
+
+    with open(filename) as f:
+        geojson = f.read()
+
+    return geojson
 
 
 def ee_export_vector(
@@ -1470,6 +966,7 @@ def ee_export_vector(
         )
         if verbose:
             print(f"Downloading data from {url}\nPlease wait ...")
+        r = None
         r = requests.get(url, stream=True, timeout=timeout, proxies=proxies)
 
         if r.status_code != 200:
@@ -1491,7 +988,8 @@ def ee_export_vector(
                 fd.write(chunk)
     except Exception as e:
         print("An error occurred while downloading.")
-        print(r.json()["error"]["message"])
+        if r is not None:
+            print(r.json()["error"]["message"])
         raise ValueError(e)
 
     try:
@@ -1709,7 +1207,7 @@ def ee_export_vector_to_feature_view(
     task.start()
 
 
-def ee_export_video_to_dirve(
+def ee_export_video_to_drive(
     collection,
     description="myExportVideoTask",
     folder=None,
@@ -1724,7 +1222,6 @@ def ee_export_video_to_dirve(
     maxFrames=None,
     **kwargs,
 ):
-
     """Creates a task to export an ImageCollection as a video to Drive.
 
     Args:
@@ -1805,7 +1302,6 @@ def ee_export_video_to_cloud_storage(
     maxFrames=None,
     **kwargs,
 ):
-
     """Creates a task to export an ImageCollection as a video to Cloud Storage.
 
     Args:
@@ -1885,7 +1381,6 @@ def ee_export_map_to_cloud_storage(
     mapsApiKey=None,
     **kwargs,
 ):
-
     """Creates a task to export an Image as a pyramid of map tiles.
 
     Exports a rectangular pyramid of map tiles for use with web map
@@ -1952,123 +1447,1310 @@ def ee_export_map_to_cloud_storage(
     task.start()
 
 
-def ee_export_geojson(
-    ee_object, filename=None, selectors=None, timeout=300, proxies=None
-):
-    """Exports Earth Engine FeatureCollection to geojson.
+# ******************************************************************************#
+# The classes and functions above are the core features of the geemap package.  #
+# The Earth Engine team and the geemap community will maintain these features.  #
+# ******************************************************************************#
+
+# ******************************************************************************#
+# The classes and functions below are the extra features of the geemap package. #
+# The geemap community will maintain these features.                            #
+# ******************************************************************************#
+
+
+class TitilerEndpoint:
+    """This class contains the methods for the titiler endpoint."""
+
+    def __init__(
+        self,
+        endpoint="https://titiler.xyz",
+        name="stac",
+        TileMatrixSetId="WebMercatorQuad",
+    ):
+        """Initialize the TitilerEndpoint object.
+
+        Args:
+            endpoint (str, optional): The endpoint of the titiler server. Defaults to "https://titiler.xyz".
+            name (str, optional): The name to be used in the file path. Defaults to "stac".
+            TileMatrixSetId (str, optional): The TileMatrixSetId to be used in the file path. Defaults to "WebMercatorQuad".
+        """
+        self.endpoint = endpoint
+        self.name = name
+        self.TileMatrixSetId = TileMatrixSetId
+
+    def url_for_stac_item(self):
+        return f"{self.endpoint}/{self.name}/{self.TileMatrixSetId}/tilejson.json"
+
+    def url_for_stac_assets(self):
+        return f"{self.endpoint}/{self.name}/assets"
+
+    def url_for_stac_bounds(self):
+        return f"{self.endpoint}/{self.name}/bounds"
+
+    def url_for_stac_info(self):
+        return f"{self.endpoint}/{self.name}/info"
+
+    def url_for_stac_info_geojson(self):
+        return f"{self.endpoint}/{self.name}/info.geojson"
+
+    def url_for_stac_statistics(self):
+        return f"{self.endpoint}/{self.name}/statistics"
+
+    def url_for_stac_pixel_value(self, lon, lat):
+        return f"{self.endpoint}/{self.name}/point/{lon},{lat}"
+
+    def url_for_stac_wmts(self):
+        return (
+            f"{self.endpoint}/{self.name}/{self.TileMatrixSetId}/WMTSCapabilities.xml"
+        )
+
+
+class PlanetaryComputerEndpoint(TitilerEndpoint):
+    """This class contains the methods for the Microsoft Planetary Computer endpoint."""
+
+    def __init__(
+        self,
+        endpoint="https://planetarycomputer.microsoft.com/api/data/v1",
+        name="item",
+        TileMatrixSetId="WebMercatorQuad",
+    ):
+        """Initialize the PlanetaryComputerEndpoint object.
+
+        Args:
+            endpoint (str, optional): The endpoint of the titiler server. Defaults to "https://planetarycomputer.microsoft.com/api/data/v1".
+            name (str, optional): The name to be used in the file path. Defaults to "item".
+            TileMatrixSetId (str, optional): The TileMatrixSetId to be used in the file path. Defaults to "WebMercatorQuad".
+        """
+        super().__init__(endpoint, name, TileMatrixSetId)
+
+    def url_for_stac_collection(self):
+        return f"{self.endpoint}/collection/{self.TileMatrixSetId}/tilejson.json"
+
+    def url_for_collection_assets(self):
+        return f"{self.endpoint}/collection/assets"
+
+    def url_for_collection_bounds(self):
+        return f"{self.endpoint}/collection/bounds"
+
+    def url_for_collection_info(self):
+        return f"{self.endpoint}/collection/info"
+
+    def url_for_collection_info_geojson(self):
+        return f"{self.endpoint}/collection/info.geojson"
+
+    def url_for_collection_pixel_value(self, lon, lat):
+        return f"{self.endpoint}/collection/point/{lon},{lat}"
+
+    def url_for_collection_wmts(self):
+        return f"{self.endpoint}/collection/{self.TileMatrixSetId}/WMTSCapabilities.xml"
+
+    def url_for_collection_lat_lon_assets(self, lng, lat):
+        return f"{self.endpoint}/collection/{lng},{lat}/assets"
+
+    def url_for_collection_bbox_assets(self, minx, miny, maxx, maxy):
+        return f"{self.endpoint}/collection/{minx},{miny},{maxx},{maxy}/assets"
+
+    def url_for_stac_mosaic(self, searchid):
+        return f"{self.endpoint}/mosaic/{searchid}/{self.TileMatrixSetId}/tilejson.json"
+
+    def url_for_mosaic_info(self, searchid):
+        return f"{self.endpoint}/mosaic/{searchid}/info"
+
+    def url_for_mosaic_lat_lon_assets(self, searchid, lon, lat):
+        return f"{self.endpoint}/mosaic/{searchid}/{lon},{lat}/assets"
+
+
+def check_titiler_endpoint(titiler_endpoint=None):
+    """Returns the default titiler endpoint.
+
+    Returns:
+        object: A titiler endpoint.
+    """
+    if titiler_endpoint is None:
+        if os.environ.get("TITILER_ENDPOINT") is not None:
+            titiler_endpoint = os.environ.get("TITILER_ENDPOINT")
+
+            if titiler_endpoint == "planetary-computer":
+                titiler_endpoint = PlanetaryComputerEndpoint()
+        else:
+            titiler_endpoint = "https://titiler.xyz"
+    elif titiler_endpoint in ["planetary-computer", "pc"]:
+        titiler_endpoint = PlanetaryComputerEndpoint()
+
+    return titiler_endpoint
+
+
+def set_proxy(port=1080, ip="http://127.0.0.1", timeout=300):
+    """Sets proxy if needed. This is only needed for countries where Google services are not available.
 
     Args:
-        ee_object (object): ee.FeatureCollection to export.
-        filename (str): Output file name. Defaults to None.
-        selectors (list, optional): A list of attributes to export. Defaults to None.
-        timeout (int, optional): Timeout in seconds. Defaults to 300 seconds.
-        proxies (dict, optional): Proxy settings. Defaults to None.
+        port (int, optional): The proxy port number. Defaults to 1080.
+        ip (str, optional): The IP address. Defaults to 'http://127.0.0.1'.
+        timeout (int, optional): The timeout in seconds. Defaults to 300.
     """
+    try:
+        if not ip.startswith("http"):
+            ip = "http://" + ip
+        proxy = "{}:{}".format(ip, port)
 
-    if not isinstance(ee_object, ee.FeatureCollection):
-        print("The ee_object must be an ee.FeatureCollection.")
-        return
+        os.environ["HTTP_PROXY"] = proxy
+        os.environ["HTTPS_PROXY"] = proxy
 
-    if filename is None:
-        out_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-        filename = os.path.join(out_dir, random_string(6) + ".geojson")
+        a = requests.get("https://earthengine.google.com/", timeout=timeout)
 
-    allowed_formats = ["geojson"]
-    filename = os.path.abspath(filename)
-    basename = os.path.basename(filename)
-    name = os.path.splitext(basename)[0]
-    filetype = os.path.splitext(basename)[1][1:].lower()
+        if a.status_code != 200:
+            print(
+                "Failed to connect to Earth Engine. Please double check the port number and ip address."
+            )
 
-    if not (filetype.lower() in allowed_formats):
-        print("The output file type must be geojson.")
-        return
+    except Exception as e:
+        print(e)
 
-    if selectors is None:
-        selectors = ee_object.first().propertyNames().getInfo()
-        selectors = [".geo"] + selectors
 
-    elif not isinstance(selectors, list):
-        print("selectors must be a list, such as ['attribute1', 'attribute2']")
-        return
+def is_drive_mounted():
+    """Checks whether Google Drive is mounted in Google Colab.
+
+    Returns:
+        bool: Returns True if Google Drive is mounted, False otherwise.
+    """
+    drive_path = "/content/drive/My Drive"
+    if os.path.exists(drive_path):
+        return True
     else:
-        allowed_attributes = ee_object.first().propertyNames().getInfo()
-        for attribute in selectors:
-            if not (attribute in allowed_attributes):
-                print(
-                    "Attributes must be one chosen from: {} ".format(
-                        ", ".join(allowed_attributes)
-                    )
-                )
-                return
+        return False
+
+
+def credentials_in_drive():
+    """Checks if the ee credentials file exists in Google Drive.
+
+    Returns:
+        bool: Returns True if Google Drive is mounted, False otherwise.
+    """
+    credentials_path = "/content/drive/My Drive/.config/earthengine/credentials"
+    if os.path.exists(credentials_path):
+        return True
+    else:
+        return False
+
+
+def credentials_in_colab():
+    """Checks if the ee credentials file exists in Google Colab.
+
+    Returns:
+        bool: Returns True if Google Drive is mounted, False otherwise.
+    """
+    credentials_path = "/root/.config/earthengine/credentials"
+    if os.path.exists(credentials_path):
+        return True
+    else:
+        return False
+
+
+def copy_credentials_to_drive():
+    """Copies ee credentials from Google Colab to Google Drive."""
+    src = "/root/.config/earthengine/credentials"
+    dst = "/content/drive/My Drive/.config/earthengine/credentials"
+
+    wd = os.path.dirname(dst)
+    if not os.path.exists(wd):
+        os.makedirs(wd)
+
+    shutil.copyfile(src, dst)
+
+
+def copy_credentials_to_colab():
+    """Copies ee credentials from Google Drive to Google Colab."""
+    src = "/content/drive/My Drive/.config/earthengine/credentials"
+    dst = "/root/.config/earthengine/credentials"
+
+    wd = os.path.dirname(dst)
+    if not os.path.exists(wd):
+        os.makedirs(wd)
+
+    shutil.copyfile(src, dst)
+
+
+########################################
+#         Package Installation         #
+########################################
+
+
+def check_install(package):
+    """Checks whether a package is installed. If not, it will install the package.
+
+    Args:
+        package (str): The name of the package to check.
+    """
+    import subprocess
 
     try:
-        # print('Generating URL ...')
-        url = ee_object.getDownloadURL(
-            filetype=filetype, selectors=selectors, filename=name
+        __import__(package)
+        # print('{} is already installed.'.format(package))
+    except ImportError:
+        print(f"{package} is not installed. Installing ...")
+        try:
+            subprocess.check_call(["python", "-m", "pip", "install", package])
+        except Exception as e:
+            print(f"Failed to install {package}")
+            print(e)
+        print(f"{package} has been installed successfully.")
+
+
+def update_package():
+    """Updates the geemap package from the geemap GitHub repository without the need to use pip or conda.
+    In this way, I don't have to keep updating pypi and conda-forge with every minor update of the package.
+
+    """
+
+    try:
+        download_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+        if not os.path.exists(download_dir):
+            os.makedirs(download_dir)
+        clone_repo(out_dir=download_dir)
+
+        pkg_dir = os.path.join(download_dir, "geemap-master")
+        work_dir = os.getcwd()
+        os.chdir(pkg_dir)
+
+        if shutil.which("pip") is None:
+            cmd = "pip3 install ."
+        else:
+            cmd = "pip install ."
+
+        os.system(cmd)
+        os.chdir(work_dir)
+
+        print(
+            "\nPlease comment out 'geemap.update_package()' and restart the kernel to take effect:\nJupyter menu -> Kernel -> Restart & Clear Output"
         )
-        # print('Downloading data from {}\nPlease wait ...'.format(url))
-        r = requests.get(url, stream=True, timeout=timeout, proxies=proxies)
 
-        if r.status_code != 200:
-            print("An error occurred while downloading. \n Retrying ...")
-            try:
-                new_ee_object = ee_object.map(filter_polygons)
-                print("Generating URL ...")
-                url = new_ee_object.getDownloadURL(
-                    filetype=filetype, selectors=selectors, filename=name
-                )
-                print(f"Downloading data from {url}\nPlease wait ...")
-                r = requests.get(url, stream=True, timeout=timeout, proxies=proxies)
-            except Exception as e:
-                print(e)
-
-        with open(filename, "wb") as fd:
-            for chunk in r.iter_content(chunk_size=1024):
-                fd.write(chunk)
     except Exception as e:
-        print("An error occurred while downloading.")
-        print(r.json()["error"]["message"])
+        raise Exception(e)
 
+
+def check_package(name, URL=""):
+    try:
+        __import__(name.lower())
+    except Exception:
+        raise ImportError(
+            f"{name} is not installed. Please install it before proceeding. {URL}"
+        )
+
+
+def install_package(package):
+    """Install a Python package.
+
+    Args:
+        package (str | list): The package name or a GitHub URL or a list of package names or GitHub URLs.
+    """
+    import subprocess
+
+    if isinstance(package, str):
+        packages = [package]
+
+    for package in packages:
+        if package.startswith("https"):
+            package = f"git+{package}"
+
+        # Execute pip install command and show output in real-time
+        command = f"pip install {package}"
+        process = subprocess.Popen(command.split(), stdout=subprocess.PIPE)
+
+        # Print output in real-time
+        while True:
+            output = process.stdout.readline()
+            if output == b"" and process.poll() is not None:
+                break
+            if output:
+                print(output.decode("utf-8").strip())
+
+        # Wait for process to complete
+        process.wait()
+
+
+def clone_repo(out_dir=".", unzip=True):
+    """Clones the geemap GitHub repository.
+
+    Args:
+        out_dir (str, optional): Output folder for the repo. Defaults to '.'.
+        unzip (bool, optional): Whether to unzip the repository. Defaults to True.
+    """
+    url = "https://github.com/gee-community/geemap/archive/master.zip"
+    filename = "geemap-master.zip"
+    download_from_url(url, out_file_name=filename, out_dir=out_dir, unzip=unzip)
+
+
+def install_from_github(url):
+    """Install a package from a GitHub repository.
+
+    Args:
+        url (str): The URL of the GitHub repository.
+    """
+
+    try:
+        download_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+        if not os.path.exists(download_dir):
+            os.makedirs(download_dir)
+
+        repo_name = os.path.basename(url)
+        zip_url = os.path.join(url, "archive/master.zip")
+        filename = repo_name + "-master.zip"
+        download_from_url(
+            url=zip_url, out_file_name=filename, out_dir=download_dir, unzip=True
+        )
+
+        pkg_dir = os.path.join(download_dir, repo_name + "-master")
+        pkg_name = os.path.basename(url)
+        work_dir = os.getcwd()
+        os.chdir(pkg_dir)
+        print(f"Installing {pkg_name}...")
+        cmd = "pip install ."
+        os.system(cmd)
+        os.chdir(work_dir)
+        print(f"{pkg_name} has been installed successfully.")
+        # print("\nPlease comment out 'install_from_github()' and restart the kernel to take effect:\nJupyter menu -> Kernel -> Restart & Clear Output")
+
+    except Exception as e:
+        print(e)
+
+
+def check_git_install():
+    """Checks if Git is installed.
+
+    Returns:
+        bool: Returns True if Git is installed, otherwise returns False.
+    """
+    import webbrowser
+
+    cmd = "git --version"
+    output = os.popen(cmd).read()
+
+    if "git version" in output:
+        return True
+    else:
+        url = "https://git-scm.com/downloads"
+        print(f"Git is not installed. Please download Git from {url} and install it.")
+        webbrowser.open_new_tab(url)
+        return False
+
+
+def clone_github_repo(url, out_dir):
+    """Clones a GitHub repository.
+
+    Args:
+        url (str): The link to the GitHub repository
+        out_dir (str): The output directory for the cloned repository.
+    """
+
+    repo_name = os.path.basename(url)
+    # url_zip = os.path.join(url, 'archive/master.zip')
+    url_zip = url + "/archive/master.zip"
+
+    if os.path.exists(out_dir):
+        print(
+            "The specified output directory already exists. Please choose a new directory."
+        )
         return
 
-    with open(filename) as f:
-        geojson = f.read()
+    parent_dir = os.path.dirname(out_dir)
+    out_file_path = os.path.join(parent_dir, repo_name + ".zip")
 
-    return geojson
+    try:
+        urllib.request.urlretrieve(url_zip, out_file_path)
+    except Exception:
+        print("The provided URL is invalid. Please double check the URL.")
+        return
+
+    with zipfile.ZipFile(out_file_path, "r") as zip_ref:
+        zip_ref.extractall(parent_dir)
+
+    src = out_file_path.replace(".zip", "-master")
+    os.rename(src, out_dir)
+    os.remove(out_file_path)
+
+
+def clone_google_repo(url, out_dir=None):
+    """Clones an Earth Engine repository from https://earthengine.googlesource.com, such as https://earthengine.googlesource.com/users/google/datasets
+
+    Args:
+        url (str): The link to the Earth Engine repository
+        out_dir (str, optional): The output directory for the cloned repository. Defaults to None.
+    """
+    repo_name = os.path.basename(url)
+
+    if out_dir is None:
+        out_dir = os.path.join(os.getcwd(), repo_name)
+
+    if not os.path.exists(os.path.dirname(out_dir)):
+        os.makedirs(os.path.dirname(out_dir))
+
+    if os.path.exists(out_dir):
+        print(
+            "The specified output directory already exists. Please choose a new directory."
+        )
+        return
+
+    if check_git_install():
+        cmd = f'git clone "{url}" "{out_dir}"'
+        os.popen(cmd).read()
+
+
+def open_github(subdir=None):
+    """Opens the GitHub repository for this package.
+
+    Args:
+        subdir (str, optional): Sub-directory of the repository. Defaults to None.
+    """
+    import webbrowser
+
+    url = "https://github.com/gee-community/geemap"
+
+    if subdir == "source":
+        url += "/tree/master/geemap/"
+    elif subdir == "examples":
+        url += "/tree/master/examples"
+    elif subdir == "tutorials":
+        url += "/tree/master/tutorials"
+
+    webbrowser.open_new_tab(url)
+
+
+def open_youtube():
+    """Opens the YouTube tutorials for geemap."""
+    import webbrowser
+
+    url = "https://www.youtube.com/playlist?list=PLAxJ4-o7ZoPccOFv1dCwvGI6TYnirRTg3"
+    webbrowser.open_new_tab(url)
+
+
+########################################
+#           Python Utilities           #
+########################################
+
+
+def is_tool(name):
+    """Check whether `name` is on PATH and marked as executable."""
+
+    # from shutil import which
+
+    return shutil.which(name) is not None
+
+
+def open_image_from_url(url, timeout=300, proxies=None):
+    """Loads an image from the specified URL.
+
+    Args:
+        url (str): URL of the image.
+        timeout (int, optional): Timeout in seconds. Defaults to 300.
+        proxies (dict, optional): Dictionary of proxies. Defaults to None.
+
+    Returns:
+        object: Image object.
+    """
+    from PIL import Image
+
+    # from io import BytesIO
+    # from urllib.parse import urlparse
+
+    try:
+        url = get_direct_url(url)
+        response = requests.get(url, timeout=timeout, proxies=proxies)
+        img = Image.open(io.BytesIO(response.content))
+        return img
+    except Exception as e:
+        print(e)
+
+
+def show_image(img_path, width=None, height=None):
+    """Shows an image within Jupyter notebook.
+
+    Args:
+        img_path (str): The image file path.
+        width (int, optional): Width of the image in pixels. Defaults to None.
+        height (int, optional): Height of the image in pixels. Defaults to None.
+
+    """
+    from IPython.display import display
+
+    try:
+        out = widgets.Output()
+        # layout={'border': '1px solid black'})
+        # layout={'border': '1px solid black', 'width': str(width + 20) + 'px', 'height': str(height + 10) + 'px'},)
+        out.outputs = ()
+        display(out)
+        with out:
+            if isinstance(img_path, str) and img_path.startswith("http"):
+                file_path = download_file(img_path)
+            else:
+                file_path = img_path
+            file = open(file_path, "rb")
+            image = file.read()
+            if (width is None) and (height is None):
+                display(widgets.Image(value=image))
+            elif (width is not None) and (height is not None):
+                display(widgets.Image(value=image, width=width, height=height))
+            else:
+                print("You need set both width and height.")
+                return
+    except Exception as e:
+        print(e)
+
+
+def show_html(html):
+    """Shows HTML within Jupyter notebook.
+
+    Args:
+        html (str): File path or HTML string.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+
+    Returns:
+        ipywidgets.HTML: HTML widget.
+    """
+    if os.path.exists(html):
+        with open(html, "r") as f:
+            content = f.read()
+
+        widget = widgets.HTML(value=content)
+        return widget
+    else:
+        try:
+            widget = widgets.HTML(value=html)
+            return widget
+        except Exception as e:
+            raise Exception(e)
+
+
+def has_transparency(img):
+    """Checks whether an image has transparency.
+
+    Args:
+        img (object):  a PIL Image object.
+
+    Returns:
+        bool: True if it has transparency, False otherwise.
+    """
+
+    if img.mode == "P":
+        transparent = img.info.get("transparency", -1)
+        for _, index in img.getcolors():
+            if index == transparent:
+                return True
+    elif img.mode == "RGBA":
+        extrema = img.getextrema()
+        if extrema[3][0] < 255:
+            return True
+
+    return False
+
+
+def upload_to_imgur(in_gif):
+    """Uploads an image to imgur.com
+
+    Args:
+        in_gif (str): The file path to the image.
+    """
+    import subprocess
+
+    pkg_name = "imgur-uploader"
+    if not is_tool(pkg_name):
+        check_install(pkg_name)
+
+    try:
+        IMGUR_API_ID = os.environ.get("IMGUR_API_ID", None)
+        IMGUR_API_SECRET = os.environ.get("IMGUR_API_SECRET", None)
+        credentials_path = os.path.join(
+            os.path.expanduser("~"), ".config/imgur_uploader/uploader.cfg"
+        )
+
+        if (
+            (IMGUR_API_ID is not None) and (IMGUR_API_SECRET is not None)
+        ) or os.path.exists(credentials_path):
+            proc = subprocess.Popen(["imgur-uploader", in_gif], stdout=subprocess.PIPE)
+            for _ in range(0, 2):
+                line = proc.stdout.readline()
+                print(line.rstrip().decode("utf-8"))
+            # while True:
+            #     line = proc.stdout.readline()
+            #     if not line:
+            #         break
+            #     print(line.rstrip().decode("utf-8"))
+        else:
+            print(
+                "Imgur API credentials could not be found. Please check https://pypi.org/project/imgur-uploader/ for instructions on how to get Imgur API credentials"
+            )
+            return
+
+    except Exception as e:
+        print(e)
+
+
+########################################
+#           Color and Fonts            #
+########################################
+
+
+def system_fonts(show_full_path=False):
+    """Gets a list of system fonts
+
+        # Common font locations:
+        # Linux: /usr/share/fonts/TTF/
+        # Windows: C:/Windows/Fonts
+        # macOS:  System > Library > Fonts
+
+    Args:
+        show_full_path (bool, optional): Whether to show the full path of each system font. Defaults to False.
+
+    Returns:
+        list: A list of system fonts.
+    """
+    try:
+        import matplotlib.font_manager
+
+        font_list = matplotlib.font_manager.findSystemFonts(
+            fontpaths=None, fontext="ttf"
+        )
+        font_list.sort()
+
+        font_names = [os.path.basename(f) for f in font_list]
+        font_names.sort()
+
+        if show_full_path:
+            return font_list
+        else:
+            return font_names
+
+    except Exception as e:
+        print(e)
+
+
+########################################
+#           Data Download              #
+########################################
+
+
+def download_from_url(url, out_file_name=None, out_dir=".", unzip=True, verbose=True):
+    """Download a file from a URL (e.g., https://github.com/giswqs/whitebox/raw/master/examples/testdata.zip)
+
+    Args:
+        url (str): The HTTP URL to download.
+        out_file_name (str, optional): The output file name to use. Defaults to None.
+        out_dir (str, optional): The output directory to use. Defaults to '.'.
+        unzip (bool, optional): Whether to unzip the downloaded file if it is a zip file. Defaults to True.
+        verbose (bool, optional): Whether to display or not the output of the function
+    """
+    in_file_name = os.path.basename(url)
+
+    if out_file_name is None:
+        out_file_name = in_file_name
+    out_file_path = os.path.join(os.path.abspath(out_dir), out_file_name)
+
+    if verbose:
+        print(f"Downloading {url} ...")
+
+    try:
+        urllib.request.urlretrieve(url, out_file_path)
+    except Exception:
+        raise Exception("The URL is invalid. Please double check the URL.")
+
+    final_path = out_file_path
+
+    if unzip:
+        # if it is a zip file
+        if ".zip" in out_file_name:
+            if verbose:
+                print(f"Unzipping {out_file_name} ...")
+            with zipfile.ZipFile(out_file_path, "r") as zip_ref:
+                zip_ref.extractall(out_dir)
+            final_path = os.path.join(
+                os.path.abspath(out_dir), out_file_name.replace(".zip", "")
+            )
+
+        # if it is a tar file
+        if ".tar" in out_file_name:
+            if verbose:
+                print(f"Unzipping {out_file_name} ...")
+            with tarfile.open(out_file_path, "r") as tar_ref:
+                with tarfile.open(out_file_path, "r") as tar_ref:
+
+                    def is_within_directory(directory, target):
+                        abs_directory = os.path.abspath(directory)
+                        abs_target = os.path.abspath(target)
+
+                        prefix = os.path.commonprefix([abs_directory, abs_target])
+
+                        return prefix == abs_directory
+
+                    def safe_extract(
+                        tar, path=".", members=None, *, numeric_owner=False
+                    ):
+                        for member in tar.getmembers():
+                            member_path = os.path.join(path, member.name)
+                            if not is_within_directory(path, member_path):
+                                raise Exception("Attempted Path Traversal in Tar File")
+
+                        tar.extractall(path, members, numeric_owner=numeric_owner)
+
+                    safe_extract(tar_ref, out_dir)
+            final_path = os.path.join(
+                os.path.abspath(out_dir), out_file_name.replace(".tar", "")
+            )
+
+    if verbose:
+        print(f"Data downloaded to: {final_path}")
+
+    return
+
+
+def download_from_gdrive(gfile_url, file_name, out_dir=".", unzip=True, verbose=True):
+    """Download a file shared via Google Drive
+       (e.g., https://drive.google.com/file/d/18SUo_HcDGltuWYZs1s7PpOmOq_FvFn04/view?usp=sharing)
+
+    Args:
+        gfile_url (str): The Google Drive shared file URL
+        file_name (str): The output file name to use.
+        out_dir (str, optional): The output directory. Defaults to '.'.
+        unzip (bool, optional): Whether to unzip the output file if it is a zip file. Defaults to True.
+        verbose (bool, optional): Whether to display or not the output of the function
+    """
+    try:
+        from google_drive_downloader import GoogleDriveDownloader as gdd
+    except ImportError:
+        raise Exception(
+            "Please install the google_drive_downloader package using `pip install googledrivedownloader`"
+        )
+
+    file_id = gfile_url.split("/")[5]
+    if verbose:
+        print(f"Google Drive file id: {file_id}")
+
+    dest_path = os.path.join(out_dir, file_name)
+    gdd.download_file_from_google_drive(file_id, dest_path, True, unzip)
+
+    return
+
+
+def create_download_link(filename, title="Click here to download: "):
+    """Downloads a file from voila. Adopted from https://github.com/voila-dashboards/voila/issues/578
+
+    Args:
+        filename (str): The file path to the file to download
+        title (str, optional): str. Defaults to "Click here to download: ".
+
+    Returns:
+        str: HTML download URL.
+    """
+    import base64
+
+    from IPython.display import HTML
+
+    data = open(filename, "rb").read()
+    b64 = base64.b64encode(data)
+    payload = b64.decode()
+    basename = os.path.basename(filename)
+    html = '<a download="{filename}" href="data:text/csv;base64,{payload}" style="color:#0000FF;" target="_blank">{title}</a>'
+    html = html.format(payload=payload, title=title + f" {basename}", filename=basename)
+    return HTML(html)
+
+
+def edit_download_html(htmlWidget, filename, title="Click here to download: "):
+    """Downloads a file from voila. Adopted from https://github.com/voila-dashboards/voila/issues/578#issuecomment-617668058
+
+    Args:
+        htmlWidget (object): The HTML widget to display the URL.
+        filename (str): File path to download.
+        title (str, optional): Download description. Defaults to "Click here to download: ".
+    """
+
+    # from IPython.display import HTML
+    # import ipywidgets as widgets
+    import base64
+
+    # Change widget html temporarily to a font-awesome spinner
+    htmlWidget.value = '<i class="fa fa-spinner fa-spin fa-2x fa-fw"></i><span class="sr-only">Loading...</span>'
+
+    # Process raw data
+    data = open(filename, "rb").read()
+    b64 = base64.b64encode(data)
+    payload = b64.decode()
+
+    basename = os.path.basename(filename)
+
+    # Create and assign html to widget
+    html = '<a download="{filename}" href="data:text/csv;base64,{payload}" target="_blank">{title}</a>'
+    htmlWidget.value = html.format(
+        payload=payload, title=title + basename, filename=basename
+    )
+
+    # htmlWidget = widgets.HTML(value = '')
+    # htmlWidget
+
+
+########################################
+#           Data Conversion            #
+########################################
+
+
+def xy_to_points(in_csv, latitude="latitude", longitude="longitude", encoding="utf-8"):
+    """Converts a csv containing points (latitude and longitude) into an ee.FeatureCollection.
+
+    Args:
+        in_csv (str): File path or HTTP URL to the input csv file. For example, https://raw.githubusercontent.com/giswqs/data/main/world/world_cities.csv
+        latitude (str, optional): Column name for the latitude column. Defaults to 'latitude'.
+        longitude (str, optional): Column name for the longitude column. Defaults to 'longitude'.
+
+    Returns:
+        ee.FeatureCollection: The ee.FeatureCollection containing the points converted from the input csv.
+    """
+
+    geojson = csv_to_geojson(in_csv, None, latitude, longitude, encoding)
+    fc = geojson_to_ee(geojson)
+    return fc
+
+
+def csv_points_to_shp(in_csv, out_shp, latitude="latitude", longitude="longitude"):
+    """Converts a csv file containing points (latitude, longitude) into a shapefile.
+
+    Args:
+        in_csv (str): File path or HTTP URL to the input csv file. For example, https://raw.githubusercontent.com/giswqs/data/main/world/world_cities.csv
+        out_shp (str): File path to the output shapefile.
+        latitude (str, optional): Column name for the latitude column. Defaults to 'latitude'.
+        longitude (str, optional): Column name for the longitude column. Defaults to 'longitude'.
+
+    """
+    import whitebox
+
+    if in_csv.startswith("http") and in_csv.endswith(".csv"):
+        out_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+        out_name = os.path.basename(in_csv)
+
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        download_from_url(in_csv, out_dir=out_dir, verbose=False)
+        in_csv = os.path.join(out_dir, out_name)
+
+    wbt = whitebox.WhiteboxTools()
+    in_csv = os.path.abspath(in_csv)
+    out_shp = os.path.abspath(out_shp)
+
+    if not os.path.exists(in_csv):
+        raise Exception("The provided csv file does not exist.")
+
+    with open(in_csv, encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        fields = reader.fieldnames
+        xfield = fields.index(longitude)
+        yfield = fields.index(latitude)
+
+    wbt.csv_points_to_vector(in_csv, out_shp, xfield=xfield, yfield=yfield, epsg=4326)
+
+
+def csv_to_shp(
+    in_csv, out_shp, latitude="latitude", longitude="longitude", encoding="utf-8"
+):
+    """Converts a csv file with latlon info to a point shapefile.
+
+    Args:
+        in_csv (str): The input csv file containing longitude and latitude columns.
+        out_shp (str): The file path to the output shapefile.
+        latitude (str, optional): The column name of the latitude column. Defaults to 'latitude'.
+        longitude (str, optional): The column name of the longitude column. Defaults to 'longitude'.
+    """
+    import shapefile as shp
+
+    if in_csv.startswith("http") and in_csv.endswith(".csv"):
+        in_csv = github_raw_url(in_csv)
+        in_csv = download_file(in_csv, quiet=True, overwrite=True)
+
+    try:
+        points = shp.Writer(out_shp, shapeType=shp.POINT)
+        with open(in_csv, encoding=encoding) as csvfile:
+            csvreader = csv.DictReader(csvfile)
+            header = csvreader.fieldnames
+            [points.field(field) for field in header]
+            for row in csvreader:
+                points.point((float(row[longitude])), (float(row[latitude])))
+                points.record(*tuple([row[f] for f in header]))
+
+        out_prj = out_shp.replace(".shp", ".prj")
+        with open(out_prj, "w") as f:
+            prj_str = 'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",0.0174532925199433]] '
+            f.write(prj_str)
+
+    except Exception as e:
+        raise Exception(e)
+
+
+def csv_to_geojson(
+    in_csv,
+    out_geojson=None,
+    latitude="latitude",
+    longitude="longitude",
+    encoding="utf-8",
+):
+    """Creates points for a CSV file and exports data as a GeoJSON.
+
+    Args:
+        in_csv (str): The file path to the input CSV file.
+        out_geojson (str): The file path to the exported GeoJSON. Default to None.
+        latitude (str, optional): The name of the column containing latitude coordinates. Defaults to "latitude".
+        longitude (str, optional): The name of the column containing longitude coordinates. Defaults to "longitude".
+        encoding (str, optional): The encoding of characters. Defaults to "utf-8".
+
+    """
+
+    import pandas as pd
+
+    in_csv = github_raw_url(in_csv)
+
+    if out_geojson is not None:
+        out_geojson = check_file_path(out_geojson)
+
+    df = pd.read_csv(in_csv)
+    geojson = df_to_geojson(
+        df, latitude=latitude, longitude=longitude, encoding=encoding
+    )
+
+    if out_geojson is None:
+        return geojson
+    else:
+        with open(out_geojson, "w", encoding=encoding) as f:
+            f.write(json.dumps(geojson))
+
+
+def df_to_geojson(
+    df,
+    out_geojson=None,
+    latitude="latitude",
+    longitude="longitude",
+    encoding="utf-8",
+):
+    """Creates points for a Pandas DataFrame and exports data as a GeoJSON.
+
+    Args:
+        df (pandas.DataFrame): The input Pandas DataFrame.
+        out_geojson (str): The file path to the exported GeoJSON. Default to None.
+        latitude (str, optional): The name of the column containing latitude coordinates. Defaults to "latitude".
+        longitude (str, optional): The name of the column containing longitude coordinates. Defaults to "longitude".
+        encoding (str, optional): The encoding of characters. Defaults to "utf-8".
+
+    """
+
+    from geojson import Feature, FeatureCollection, Point
+
+    if out_geojson is not None:
+        out_dir = os.path.dirname(os.path.abspath(out_geojson))
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+
+    features = df.apply(
+        lambda row: Feature(
+            geometry=Point((float(row[longitude]), float(row[latitude]))),
+            properties=dict(row),
+        ),
+        axis=1,
+    ).tolist()
+
+    geojson = FeatureCollection(features=features)
+
+    if out_geojson is None:
+        return geojson
+    else:
+        with open(out_geojson, "w", encoding=encoding) as f:
+            f.write(json.dumps(geojson))
+
+
+def csv_to_ee(
+    in_csv, latitude="latitude", longitude="longitude", encoding="utf-8", geodesic=True
+):
+    """Creates points for a CSV file and exports data as a GeoJSON.
+
+    Args:
+        in_csv (str): The file path to the input CSV file.
+        latitude (str, optional): The name of the column containing latitude coordinates. Defaults to "latitude".
+        longitude (str, optional): The name of the column containing longitude coordinates. Defaults to "longitude".
+        encoding (str, optional): The encoding of characters. Defaults to "utf-8".
+        geodesic (bool, optional): Whether line segments should be interpreted as spherical geodesics. If false, indicates that line segments should be interpreted as planar lines in the specified CRS. If absent, defaults to true if the CRS is geographic (including the default EPSG:4326), or to false if the CRS is projected.
+
+    Returns:
+        ee_object: An ee.Geometry object
+    """
+
+    geojson = csv_to_geojson(
+        in_csv, latitude=latitude, longitude=longitude, encoding=encoding
+    )
+    fc = geojson_to_ee(geojson, geodesic=geodesic)
+    return fc
+
+
+def csv_to_gdf(in_csv, latitude="latitude", longitude="longitude", encoding="utf-8"):
+    """Creates points for a CSV file and converts them to a GeoDataFrame.
+
+    Args:
+        in_csv (str): The file path to the input CSV file.
+        latitude (str, optional): The name of the column containing latitude coordinates. Defaults to "latitude".
+        longitude (str, optional): The name of the column containing longitude coordinates. Defaults to "longitude".
+        encoding (str, optional): The encoding of characters. Defaults to "utf-8".
+
+    Returns:
+        object: GeoDataFrame.
+    """
+
+    check_package(name="geopandas", URL="https://geopandas.org")
+
+    import geopandas as gpd
+
+    out_dir = os.getcwd()
+
+    out_geojson = os.path.join(out_dir, random_string() + ".geojson")
+    csv_to_geojson(in_csv, out_geojson, latitude, longitude, encoding)
+
+    gdf = gpd.read_file(out_geojson)
+    os.remove(out_geojson)
+    return gdf
+
+
+def csv_to_vector(
+    in_csv,
+    output,
+    latitude="latitude",
+    longitude="longitude",
+    encoding="utf-8",
+    **kwargs,
+):
+    """Creates points for a CSV file and converts them to a vector dataset.
+
+    Args:
+        in_csv (str): The file path to the input CSV file.
+        output (str): The file path to the output vector dataset.
+        latitude (str, optional): The name of the column containing latitude coordinates. Defaults to "latitude".
+        longitude (str, optional): The name of the column containing longitude coordinates. Defaults to "longitude".
+        encoding (str, optional): The encoding of characters. Defaults to "utf-8".
+
+    """
+    gdf = csv_to_gdf(in_csv, latitude, longitude, encoding)
+    gdf.to_file(output, **kwargs)
+
+
+def ee_to_geojson(ee_object, filename=None, indent=2, **kwargs):
+    """Converts Earth Engine object to geojson.
+
+    Args:
+        ee_object (object): An Earth Engine object.
+        filename (str, optional): The file path to save the geojson. Defaults to None.
+
+    Returns:
+        object: GeoJSON object.
+    """
+
+    try:
+        if (
+            isinstance(ee_object, ee.Geometry)
+            or isinstance(ee_object, ee.Feature)
+            or isinstance(ee_object, ee.FeatureCollection)
+        ):
+            json_object = ee_object.getInfo()
+            if filename is not None:
+                filename = os.path.abspath(filename)
+                if not os.path.exists(os.path.dirname(filename)):
+                    os.makedirs(os.path.dirname(filename))
+                with open(filename, "w") as f:
+                    f.write(json.dumps(json_object, indent=indent, **kwargs) + "\n")
+            else:
+                return json_object
+        else:
+            print("Could not convert the Earth Engine object to geojson")
+    except Exception as e:
+        raise Exception(e)
+
+
+def ee_to_bbox(ee_object):
+    """Get the bounding box of an Earth Engine object as a list in the format [xmin, ymin, xmax, ymax].
+
+    Args:
+        ee_object (ee.Image | ee.Geometry | ee.Feature | ee.FeatureCollection): The input Earth Engine object.
+
+    Returns:
+        list: The bounding box of the Earth Engine object in the format [xmin, ymin, xmax, ymax].
+    """
+    if (
+        isinstance(ee_object, ee.Image)
+        or isinstance(ee_object, ee.Feature)
+        or isinstance(ee_object, ee.FeatureCollection)
+    ):
+        geometry = ee_object.geometry()
+    elif isinstance(ee_object, ee.Geometry):
+        geometry = ee_object
+    else:
+        raise Exception(
+            "The ee_object must be an ee.Image, ee.Feature, ee.FeatureCollection or ee.Geometry object."
+        )
+
+    bounds = geometry.bounds().getInfo()["coordinates"][0]
+    xmin = bounds[0][0]
+    ymin = bounds[0][1]
+    xmax = bounds[1][0]
+    ymax = bounds[2][1]
+    bbox = [xmin, ymin, xmax, ymax]
+    return bbox
+
+
+def shp_to_geojson(in_shp, filename=None, **kwargs):
+    """Converts a shapefile to GeoJSON.
+
+    Args:
+        in_shp (str): File path of the input shapefile.
+        filename (str, optional): File path of the output GeoJSON. Defaults to None.
+
+    Returns:
+        object: The json object representing the shapefile.
+    """
+    try:
+        import shapefile
+
+        # from datetime import date
+
+        in_shp = os.path.abspath(in_shp)
+
+        if filename is not None:
+            ext = os.path.splitext(filename)[1]
+            print(ext)
+            if ext.lower() not in [".json", ".geojson"]:
+                raise TypeError("The output file extension must the .json or .geojson.")
+
+            if not os.path.exists(os.path.dirname(filename)):
+                os.makedirs(os.path.dirname(filename))
+
+        if not is_GCS(in_shp):
+            try:
+                import geopandas as gpd
+
+            except Exception:
+                raise ImportError(
+                    "GeoPandas is required to perform reprojection of the data. See https://geopandas.org/install.html"
+                )
+
+            try:
+                in_gdf = gpd.read_file(in_shp)
+                out_gdf = in_gdf.to_crs(epsg="4326")
+                out_shp = in_shp.replace(".shp", "_gcs.shp")
+                out_gdf.to_file(out_shp)
+                in_shp = out_shp
+            except Exception as e:
+                raise Exception(e)
+
+        if "encoding" in kwargs:
+            reader = shapefile.Reader(in_shp, encoding=kwargs.pop("encoding"))
+        else:
+            reader = shapefile.Reader(in_shp)
+        out_dict = reader.__geo_interface__
+        # fields = reader.fields[1:]
+        # field_names = [field[0] for field in fields]
+        # # pyShp returns dates as `datetime.date` or as `bytes` when they are empty
+        # # This is not JSON compatible, so we keep track of them to convert them to str
+        # date_fields_names = [field[0] for field in fields if field[1] == "D"]
+        # buffer = []
+        # for sr in reader.shapeRecords():
+        #     atr = dict(zip(field_names, sr.record))
+        #     for date_field in date_fields_names:
+        #         value = atr[date_field]
+        #         # convert date to string, similar to pyShp writing
+        #         # https://github.com/GeospatialPython/pyshp/blob/69c60f6d07c329f7d3ac2cba79bc03643bd424d8/shapefile.py#L1814
+        #         if isinstance(value, date):
+        #             value = "{:04d}{:02d}{:02d}".format(
+        #                 value.year, value.month, value.day
+        #             )
+        #         elif not value:  # empty bytes string
+        #             value = "0" * 8  # QGIS NULL for date type
+        #         atr[date_field] = value
+        #     geom = sr.shape.__geo_interface__
+        #     buffer.append(dict(type="Feature", geometry=geom, properties=atr))
+
+        # out_dict = {"type": "FeatureCollection", "features": buffer}
+
+        if filename is not None:
+            # from json import dumps
+
+            with open(filename, "w") as geojson:
+                geojson.write(json.dumps(out_dict, indent=2) + "\n")
+        else:
+            return out_dict
+
+    except Exception as e:
+        raise Exception(e)
+
+
+def shp_to_ee(in_shp, **kwargs):
+    """Converts a shapefile to Earth Engine objects. Note that the CRS of the shapefile must be EPSG:4326
+
+    Args:
+        in_shp (str): File path to a shapefile.
+
+    Returns:
+        object: Earth Engine objects representing the shapefile.
+    """
+    # ee_initialize()
+    try:
+        if "encoding" in kwargs:
+            json_data = shp_to_geojson(in_shp, encoding=kwargs.pop("encoding"))
+        else:
+            json_data = shp_to_geojson(in_shp)
+        ee_object = geojson_to_ee(json_data)
+        return ee_object
+    except Exception as e:
+        print(e)
+
+
+########################################
+#              Export Data             #
+########################################
+
+
+def filter_polygons(ftr):
+    """Converts GeometryCollection to Polygon/MultiPolygon
+
+    Args:
+        ftr (object): ee.Feature
+
+    Returns:
+        object: ee.Feature
+    """
+    # ee_initialize()
+    geometries = ftr.geometry().geometries()
+    geometries = geometries.map(
+        lambda geo: ee.Feature(ee.Geometry(geo)).set("geoType", ee.Geometry(geo).type())
+    )
+
+    polygons = (
+        ee.FeatureCollection(geometries)
+        .filter(ee.Filter.eq("geoType", "Polygon"))
+        .geometry()
+    )
+    return ee.Feature(polygons).copyProperties(ftr)
 
 
 def ee_to_shp(
     ee_object,
     filename,
-    selectors=None,
-    verbose=True,
-    keep_zip=False,
-    timeout=300,
-    proxies=None,
+    columns=None,
+    sort_columns=False,
+    **kwargs,
 ):
     """Downloads an ee.FeatureCollection as a shapefile.
 
     Args:
         ee_object (object): ee.FeatureCollection
         filename (str): The output filepath of the shapefile.
-        selectors (list, optional): A list of attributes to export. Defaults to None.
-        verbose (bool, optional): Whether to print out descriptive text.
-        keep_zip (bool, optional): Whether to keep the downloaded shapefile as a zip file.
-        timeout (int, optional): Timeout in seconds. Defaults to 300 seconds.
-        proxies (dict, optional): Proxy settings. Defaults to None.
+        columns (list, optional): A list of attributes to export. Defaults to None.
+        sort_columns (bool, optional): Whether to sort the columns alphabetically. Defaults to False.
+        kwargs: Additional arguments passed to ee_to_gdf().
+
     """
-    # ee_initialize()
     try:
         if filename.lower().endswith(".shp"):
-            ee_export_vector(
-                ee_object=ee_object,
-                filename=filename,
-                selectors=selectors,
-                verbose=verbose,
-                keep_zip=keep_zip,
-                timeout=timeout,
-                proxies=proxies,
-            )
+            gdf = ee_to_gdf(ee_object, columns, sort_columns, **kwargs)
+            gdf.to_file(filename)
         else:
             print("The filename must end with .shp")
 
@@ -2077,30 +2759,28 @@ def ee_to_shp(
 
 
 def ee_to_csv(
-    ee_object, filename, selectors=None, verbose=True, timeout=300, proxies=None
+    ee_object,
+    filename,
+    columns=None,
+    remove_geom=True,
+    sort_columns=False,
+    **kwargs,
 ):
     """Downloads an ee.FeatureCollection as a CSV file.
 
     Args:
         ee_object (object): ee.FeatureCollection
         filename (str): The output filepath of the CSV file.
-        selectors (list, optional): A list of attributes to export. Defaults to None.
-        verbose (bool, optional): Whether to print out descriptive text.
-        timeout (int, optional): Timeout in seconds. Defaults to 300 seconds.
-        proxies (dict, optional): Proxy settings. Defaults to None.
+        columns (list, optional): A list of attributes to export. Defaults to None.
+        remove_geom (bool, optional): Whether to remove the geometry column. Defaults to True.
+        sort_columns (bool, optional): Whether to sort the columns alphabetically. Defaults to False.
+        kwargs: Additional arguments passed to ee_to_df().
 
     """
-    # ee_initialize()
     try:
         if filename.lower().endswith(".csv"):
-            ee_export_vector(
-                ee_object=ee_object,
-                filename=filename,
-                selectors=selectors,
-                verbose=verbose,
-                timeout=timeout,
-                proxies=proxies,
-            )
+            df = ee_to_df(ee_object, columns, remove_geom, sort_columns, **kwargs)
+            df.to_csv(filename, index=False)
         else:
             print("The filename must end with .csv")
 
@@ -2133,730 +2813,6 @@ def dict_to_csv(data_dict, out_csv, by_row=False, timeout=300, proxies=None):
         csv_feat_col = ee.FeatureCollection(csv_feature)
 
     ee_export_vector(csv_feat_col, out_csv, timeout=timeout, proxies=proxies)
-
-
-def ee_export_image(
-    ee_object,
-    filename,
-    scale=None,
-    crs=None,
-    crs_transform=None,
-    region=None,
-    dimensions=None,
-    file_per_band=False,
-    format="ZIPPED_GEO_TIFF",
-    timeout=300,
-    proxies=None,
-):
-    """Exports an ee.Image as a GeoTIFF.
-
-    Args:
-        ee_object (object): The ee.Image to download.
-        filename (str): Output filename for the exported image.
-        scale (float, optional): A default scale to use for any bands that do not specify one; ignored if crs and crs_transform is specified. Defaults to None.
-        crs (str, optional): A default CRS string to use for any bands that do not explicitly specify one. Defaults to None.
-        crs_transform (list, optional): a default affine transform to use for any bands that do not specify one, of the same format as the crs_transform of bands. Defaults to None.
-        region (object, optional): A polygon specifying a region to download; ignored if crs and crs_transform is specified. Defaults to None.
-        dimensions (list, optional): An optional array of two integers defining the width and height to which the band is cropped. Defaults to None.
-        file_per_band (bool, optional): Whether to produce a different GeoTIFF per band. Defaults to False.
-        format (str, optional):  One of: "ZIPPED_GEO_TIFF" (GeoTIFF file(s) wrapped in a zip file, default), "GEO_TIFF" (GeoTIFF file), "NPY" (NumPy binary format). If "GEO_TIFF" or "NPY",
-            filePerBand and all band-level transformations will be ignored. Loading a NumPy output results in a structured array.
-        timeout (int, optional): The timeout in seconds for the request. Defaults to 300.
-        proxies (dict, optional): A dictionary of proxy servers to use. Defaults to None.
-    """
-
-    if not isinstance(ee_object, ee.Image):
-        print("The ee_object must be an ee.Image.")
-        return
-
-    filename = os.path.abspath(filename)
-    basename = os.path.basename(filename)
-    name = os.path.splitext(basename)[0]
-    filetype = os.path.splitext(basename)[1][1:].lower()
-    filename_zip = filename.replace(".tif", ".zip")
-
-    if filetype != "tif":
-        print("The filename must end with .tif")
-        return
-
-    try:
-        print("Generating URL ...")
-        params = {"name": name, "filePerBand": file_per_band}
-
-        params["scale"] = scale
-        if region is None:
-            region = ee_object.geometry()
-        if dimensions is not None:
-            params["dimensions"] = dimensions
-        params["region"] = region
-        if crs is not None:
-            params["crs"] = crs
-        if crs_transform is not None:
-            params["crs_transform"] = crs_transform
-
-        params["format"] = format
-
-        try:
-            url = ee_object.getDownloadURL(params)
-        except Exception as e:
-            print("An error occurred while downloading.")
-            print(e)
-            return
-        print(f"Downloading data from {url}\nPlease wait ...")
-        r = requests.get(url, stream=True, timeout=timeout, proxies=proxies)
-
-        if r.status_code != 200:
-            print("An error occurred while downloading.")
-            return
-
-        with open(filename_zip, "wb") as fd:
-            for chunk in r.iter_content(chunk_size=1024):
-                fd.write(chunk)
-
-    except Exception as e:
-        print("An error occurred while downloading.")
-        print(r.json()["error"]["message"])
-        return
-
-    try:
-        with zipfile.ZipFile(filename_zip) as z:
-            z.extractall(os.path.dirname(filename))
-        os.remove(filename_zip)
-
-        if file_per_band:
-            print(f"Data downloaded to {os.path.dirname(filename)}")
-        else:
-            print(f"Data downloaded to {filename}")
-    except Exception as e:
-        print(e)
-
-
-def ee_export_image_collection(
-    ee_object,
-    out_dir,
-    scale=None,
-    crs=None,
-    crs_transform=None,
-    region=None,
-    dimensions=None,
-    file_per_band=False,
-    format="ZIPPED_GEO_TIFF",
-    timeout=300,
-    proxies=None,
-):
-    """Exports an ImageCollection as GeoTIFFs.
-
-    Args:
-        ee_object (object): The ee.Image to download.
-        out_dir (str): The output directory for the exported images.
-        scale (float, optional): A default scale to use for any bands that do not specify one; ignored if crs and crs_transform is specified. Defaults to None.
-        crs (str, optional): A default CRS string to use for any bands that do not explicitly specify one. Defaults to None.
-        crs_transform (list, optional): a default affine transform to use for any bands that do not specify one, of the same format as the crs_transform of bands. Defaults to None.
-        region (object, optional): A polygon specifying a region to download; ignored if crs and crs_transform is specified. Defaults to None.
-        dimensions (list, optional): An optional array of two integers defining the width and height to which the band is cropped. Defaults to None.
-        file_per_band (bool, optional): Whether to produce a different GeoTIFF per band. Defaults to False.
-        format (str, optional):  One of: "ZIPPED_GEO_TIFF" (GeoTIFF file(s) wrapped in a zip file, default), "GEO_TIFF" (GeoTIFF file), "NPY" (NumPy binary format). If "GEO_TIFF" or "NPY",
-            filePerBand and all band-level transformations will be ignored. Loading a NumPy output results in a structured array.
-        timeout (int, optional): The timeout in seconds for the request. Defaults to 300.
-        proxies (dict, optional): A dictionary of proxy servers to use. Defaults to None.
-    """
-
-    if not isinstance(ee_object, ee.ImageCollection):
-        print("The ee_object must be an ee.ImageCollection.")
-        return
-
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-
-    try:
-
-        count = int(ee_object.size().getInfo())
-        print(f"Total number of images: {count}\n")
-
-        for i in range(0, count):
-            image = ee.Image(ee_object.toList(count).get(i))
-            name = image.get("system:index").getInfo() + ".tif"
-            filename = os.path.join(os.path.abspath(out_dir), name)
-            print(f"Exporting {i + 1}/{count}: {name}")
-            ee_export_image(
-                image,
-                filename=filename,
-                scale=scale,
-                crs=crs,
-                crs_transform=crs_transform,
-                region=region,
-                dimensions=dimensions,
-                file_per_band=file_per_band,
-                format=format,
-                timeout=timeout,
-                proxies=proxies,
-            )
-            print("\n")
-
-    except Exception as e:
-        print(e)
-
-
-def ee_export_image_to_drive(
-    image,
-    description="myExportImageTask",
-    folder=None,
-    fileNamePrefix=None,
-    dimensions=None,
-    region=None,
-    scale=None,
-    crs=None,
-    crsTransform=None,
-    maxPixels=None,
-    shardSize=None,
-    fileDimensions=None,
-    skipEmptyTiles=None,
-    fileFormat=None,
-    formatOptions=None,
-    **kwargs,
-):
-    """Creates a batch task to export an Image as a raster to Google Drive.
-
-    Args:
-        image: The image to be exported.
-        description: Human-readable name of the task.
-        folder: The name of a unique folder in your Drive account to
-            export into. Defaults to the root of the drive.
-        fileNamePrefix: The Google Drive filename for the export.
-            Defaults to the name of the task.
-        dimensions: The dimensions of the exported image. Takes either a
-            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
-            where WIDTH and HEIGHT are each positive integers.
-        region: The lon,lat coordinates for a LinearRing or Polygon
-            specifying the region to export. Can be specified as a nested
-            lists of numbers or a serialized string. Defaults to the image's
-            region.
-        scale: The resolution in meters per pixel. Defaults to the
-            native resolution of the image assset unless a crsTransform
-            is specified.
-        crs: The coordinate reference system of the exported image's
-            projection. Defaults to the image's default projection.
-        crsTransform: A comma-separated string of 6 numbers describing
-            the affine transform of the coordinate reference system of the
-            exported image's projection, in the order: xScale, xShearing,
-            xTranslation, yShearing, yScale and yTranslation. Defaults to
-            the image's native CRS transform.
-        maxPixels: The maximum allowed number of pixels in the exported
-            image. The task will fail if the exported region covers more
-            pixels in the specified projection. Defaults to 100,000,000.
-        shardSize: Size in pixels of the tiles in which this image will be
-            computed. Defaults to 256.
-        fileDimensions: The dimensions in pixels of each image file, if the
-            image is too large to fit in a single file. May specify a
-            single number to indicate a square shape, or a tuple of two
-            dimensions to indicate (width,height). Note that the image will
-            still be clipped to the overall image dimensions. Must be a
-            multiple of shardSize.
-        skipEmptyTiles: If true, skip writing empty (i.e. fully-masked)
-            image tiles. Defaults to false.
-        fileFormat: The string file format to which the image is exported.
-            Currently only 'GeoTIFF' and 'TFRecord' are supported, defaults to
-            'GeoTIFF'.
-        formatOptions: A dictionary of string keys to format specific options.
-        **kwargs: Holds other keyword arguments that may have been deprecated
-            such as 'crs_transform', 'driveFolder', and 'driveFileNamePrefix'.
-    """
-
-    if not isinstance(image, ee.Image):
-        raise ValueError("Input image must be an instance of ee.Image")
-
-    task = ee.batch.Export.image.toDrive(
-        image,
-        description,
-        folder,
-        fileNamePrefix,
-        dimensions,
-        region,
-        scale,
-        crs,
-        crsTransform,
-        maxPixels,
-        shardSize,
-        fileDimensions,
-        skipEmptyTiles,
-        fileFormat,
-        formatOptions,
-        **kwargs,
-    )
-    task.start()
-
-
-def ee_export_image_to_asset(
-    image,
-    description="myExportImageTask",
-    assetId=None,
-    pyramidingPolicy=None,
-    dimensions=None,
-    region=None,
-    scale=None,
-    crs=None,
-    crsTransform=None,
-    maxPixels=None,
-    **kwargs,
-):
-    """Creates a task to export an EE Image to an EE Asset.
-
-    Args:
-        image: The image to be exported.
-        description: Human-readable name of the task.
-        assetId: The destination asset ID.
-        pyramidingPolicy: The pyramiding policy to apply to each band in the
-            image, a dictionary keyed by band name. Values must be
-            one of: "mean", "sample", "min", "max", or "mode".
-            Defaults to "mean". A special key, ".default", may be used to
-            change the default for all bands.
-        dimensions: The dimensions of the exported image. Takes either a
-            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
-            where WIDTH and HEIGHT are each positive integers.
-        region: The lon,lat coordinates for a LinearRing or Polygon
-            specifying the region to export. Can be specified as a nested
-            lists of numbers or a serialized string. Defaults to the image's
-            region.
-        scale: The resolution in meters per pixel. Defaults to the
-            native resolution of the image assset unless a crsTransform
-            is specified.
-        crs: The coordinate reference system of the exported image's
-            projection. Defaults to the image's default projection.
-        crsTransform: A comma-separated string of 6 numbers describing
-            the affine transform of the coordinate reference system of the
-            exported image's projection, in the order: xScale, xShearing,
-            xTranslation, yShearing, yScale and yTranslation. Defaults to
-            the image's native CRS transform.
-        maxPixels: The maximum allowed number of pixels in the exported
-            image. The task will fail if the exported region covers more
-            pixels in the specified projection. Defaults to 100,000,000.
-        **kwargs: Holds other keyword arguments that may have been deprecated
-            such as 'crs_transform'.
-    """
-
-    if not isinstance(image, ee.Image):
-        raise ValueError("Input image must be an instance of ee.Image")
-
-    if isinstance(assetId, str):
-        if assetId.startswith("users/") or assetId.startswith("projects/"):
-            pass
-        else:
-            assetId = f"{ee_user_id()}/{assetId}"
-
-    task = ee.batch.Export.image.toAsset(
-        image,
-        description,
-        assetId,
-        pyramidingPolicy,
-        dimensions,
-        region,
-        scale,
-        crs,
-        crsTransform,
-        maxPixels,
-        **kwargs,
-    )
-    task.start()
-
-
-def ee_export_image_to_cloud_storage(
-    image,
-    description="myExportImageTask",
-    bucket=None,
-    fileNamePrefix=None,
-    dimensions=None,
-    region=None,
-    scale=None,
-    crs=None,
-    crsTransform=None,
-    maxPixels=None,
-    shardSize=None,
-    fileDimensions=None,
-    skipEmptyTiles=None,
-    fileFormat=None,
-    formatOptions=None,
-    **kwargs,
-):
-    """Creates a task to export an EE Image to Google Cloud Storage.
-
-    Args:
-        image: The image to be exported.
-        description: Human-readable name of the task.
-        bucket: The name of a Cloud Storage bucket for the export.
-        fileNamePrefix: Cloud Storage object name prefix for the export.
-            Defaults to the name of the task.
-        dimensions: The dimensions of the exported image. Takes either a
-            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
-            where WIDTH and HEIGHT are each positive integers.
-        region: The lon,lat coordinates for a LinearRing or Polygon
-            specifying the region to export. Can be specified as a nested
-            lists of numbers or a serialized string. Defaults to the image's
-            region.
-        scale: The resolution in meters per pixel. Defaults to the
-            native resolution of the image assset unless a crsTransform
-            is specified.
-        crs: The coordinate reference system of the exported image's
-            projection. Defaults to the image's default projection.
-        crsTransform: A comma-separated string of 6 numbers describing
-            the affine transform of the coordinate reference system of the
-            exported image's projection, in the order: xScale, xShearing,
-            xTranslation, yShearing, yScale and yTranslation. Defaults to
-            the image's native CRS transform.
-        maxPixels: The maximum allowed number of pixels in the exported
-            image. The task will fail if the exported region covers more
-            pixels in the specified projection. Defaults to 100,000,000.
-        shardSize: Size in pixels of the tiles in which this image will be
-            computed. Defaults to 256.
-        fileDimensions: The dimensions in pixels of each image file, if the
-            image is too large to fit in a single file. May specify a
-            single number to indicate a square shape, or a tuple of two
-            dimensions to indicate (width,height). Note that the image will
-            still be clipped to the overall image dimensions. Must be a
-            multiple of shardSize.
-        skipEmptyTiles: If true, skip writing empty (i.e. fully-masked)
-            image tiles. Defaults to false.
-        fileFormat: The string file format to which the image is exported.
-            Currently only 'GeoTIFF' and 'TFRecord' are supported, defaults to
-            'GeoTIFF'.
-        formatOptions: A dictionary of string keys to format specific options.
-        **kwargs: Holds other keyword arguments that may have been deprecated
-            such as 'crs_transform'.
-    """
-
-    if not isinstance(image, ee.Image):
-        raise ValueError("Input image must be an instance of ee.Image")
-
-    task = ee.batch.Export.image.toCloudStorage(
-        image,
-        description,
-        bucket,
-        fileNamePrefix,
-        dimensions,
-        region,
-        scale,
-        crs,
-        crsTransform,
-        maxPixels,
-        shardSize,
-        fileDimensions,
-        skipEmptyTiles,
-        fileFormat,
-        formatOptions,
-        **kwargs,
-    )
-    task.start()
-
-
-def ee_export_image_collection_to_drive(
-    ee_object,
-    descriptions=None,
-    folder=None,
-    fileNamePrefix=None,
-    dimensions=None,
-    region=None,
-    scale=None,
-    crs=None,
-    crsTransform=None,
-    maxPixels=None,
-    shardSize=None,
-    fileDimensions=None,
-    skipEmptyTiles=None,
-    fileFormat=None,
-    formatOptions=None,
-    **kwargs,
-):
-    """Creates a batch task to export an ImageCollection as raster images to Google Drive.
-
-    Args:
-        ee_object: The image collection to export.
-        descriptions: A list of human-readable names of the tasks.
-        folder: The name of a unique folder in your Drive account to
-            export into. Defaults to the root of the drive.
-        fileNamePrefix: The Google Drive filename for the export.
-            Defaults to the name of the task.
-        dimensions: The dimensions of the exported image. Takes either a
-            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
-            where WIDTH and HEIGHT are each positive integers.
-        region: The lon,lat coordinates for a LinearRing or Polygon
-            specifying the region to export. Can be specified as a nested
-            lists of numbers or a serialized string. Defaults to the image's
-            region.
-        scale: The resolution in meters per pixel. Defaults to the
-            native resolution of the image assset unless a crsTransform
-            is specified.
-        crs: The coordinate reference system of the exported image's
-            projection. Defaults to the image's default projection.
-        crsTransform: A comma-separated string of 6 numbers describing
-            the affine transform of the coordinate reference system of the
-            exported image's projection, in the order: xScale, xShearing,
-            xTranslation, yShearing, yScale and yTranslation. Defaults to
-            the image's native CRS transform.
-        maxPixels: The maximum allowed number of pixels in the exported
-            image. The task will fail if the exported region covers more
-            pixels in the specified projection. Defaults to 100,000,000.
-        shardSize: Size in pixels of the tiles in which this image will be
-            computed. Defaults to 256.
-        fileDimensions: The dimensions in pixels of each image file, if the
-            image is too large to fit in a single file. May specify a
-            single number to indicate a square shape, or a tuple of two
-            dimensions to indicate (width,height). Note that the image will
-            still be clipped to the overall image dimensions. Must be a
-            multiple of shardSize.
-        skipEmptyTiles: If true, skip writing empty (i.e. fully-masked)
-            image tiles. Defaults to false.
-        fileFormat: The string file format to which the image is exported.
-            Currently only 'GeoTIFF' and 'TFRecord' are supported, defaults to
-            'GeoTIFF'.
-        formatOptions: A dictionary of string keys to format specific options.
-        **kwargs: Holds other keyword arguments that may have been deprecated
-            such as 'crs_transform', 'driveFolder', and 'driveFileNamePrefix'.
-    """
-
-    if not isinstance(ee_object, ee.ImageCollection):
-        raise ValueError("The ee_object must be an ee.ImageCollection.")
-
-    try:
-        count = int(ee_object.size().getInfo())
-        print(f"Total number of images: {count}\n")
-
-        if (descriptions is not None) and (len(descriptions) != count):
-            raise ValueError(
-                "The number of descriptions is not equal to the number of images."
-            )
-
-        if descriptions is None:
-            descriptions = ee_object.aggregate_array("system:index").getInfo()
-
-        images = ee_object.toList(count)
-
-        if os.environ.get("USE_MKDOCS") is not None:  # skip if running GitHub CI.
-            return
-
-        for i in range(0, count):
-            image = ee.Image(images.get(i))
-            description = descriptions[i]
-            ee_export_image_to_drive(
-                image,
-                description,
-                folder,
-                fileNamePrefix,
-                dimensions,
-                region,
-                scale,
-                crs,
-                crsTransform,
-                maxPixels,
-                shardSize,
-                fileDimensions,
-                skipEmptyTiles,
-                fileFormat,
-                formatOptions,
-                **kwargs,
-            )
-
-    except Exception as e:
-        print(e)
-
-
-def ee_export_image_collection_to_asset(
-    ee_object,
-    descriptions=None,
-    assetIds=None,
-    pyramidingPolicy=None,
-    dimensions=None,
-    region=None,
-    scale=None,
-    crs=None,
-    crsTransform=None,
-    maxPixels=None,
-    **kwargs,
-):
-    """Creates a batch task to export an ImageCollection as raster images to Google Drive.
-
-    Args:
-        ee_object: The image collection to export.
-        descriptions: A list of human-readable names of the tasks.
-        assetIds: The destination asset ID.
-        pyramidingPolicy: The pyramiding policy to apply to each band in the
-            image, a dictionary keyed by band name. Values must be
-            one of: "mean", "sample", "min", "max", or "mode".
-            Defaults to "mean". A special key, ".default", may be used to
-            change the default for all bands.
-        dimensions: The dimensions of the exported image. Takes either a
-            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
-            where WIDTH and HEIGHT are each positive integers.
-        region: The lon,lat coordinates for a LinearRing or Polygon
-            specifying the region to export. Can be specified as a nested
-            lists of numbers or a serialized string. Defaults to the image's
-            region.
-        scale: The resolution in meters per pixel. Defaults to the
-            native resolution of the image assset unless a crsTransform
-            is specified.
-        crs: The coordinate reference system of the exported image's
-            projection. Defaults to the image's default projection.
-        crsTransform: A comma-separated string of 6 numbers describing
-            the affine transform of the coordinate reference system of the
-            exported image's projection, in the order: xScale, xShearing,
-            xTranslation, yShearing, yScale and yTranslation. Defaults to
-            the image's native CRS transform.
-        maxPixels: The maximum allowed number of pixels in the exported
-            image. The task will fail if the exported region covers more
-            pixels in the specified projection. Defaults to 100,000,000.
-        **kwargs: Holds other keyword arguments that may have been deprecated
-            such as 'crs_transform'.
-    """
-
-    if not isinstance(ee_object, ee.ImageCollection):
-        raise ValueError("The ee_object must be an ee.ImageCollection.")
-
-    try:
-        count = int(ee_object.size().getInfo())
-        print(f"Total number of images: {count}\n")
-
-        if (descriptions is not None) and (len(descriptions) != count):
-            print("The number of descriptions is not equal to the number of images.")
-            return
-
-        if descriptions is None:
-            descriptions = ee_object.aggregate_array("system:index").getInfo()
-
-        if assetIds is None:
-            assetIds = descriptions
-
-        images = ee_object.toList(count)
-
-        if os.environ.get("USE_MKDOCS") is not None:  # skip if running GitHub CI.
-            return
-
-        for i in range(0, count):
-            image = ee.Image(images.get(i))
-            description = descriptions[i]
-            assetId = assetIds[i]
-            ee_export_image_to_asset(
-                image,
-                description,
-                assetId,
-                pyramidingPolicy,
-                dimensions,
-                region,
-                scale,
-                crs,
-                crsTransform,
-                maxPixels,
-                **kwargs,
-            )
-
-    except Exception as e:
-        print(e)
-
-
-def ee_export_image_collection_to_cloud_storage(
-    ee_object,
-    descriptions=None,
-    bucket=None,
-    fileNamePrefix=None,
-    dimensions=None,
-    region=None,
-    scale=None,
-    crs=None,
-    crsTransform=None,
-    maxPixels=None,
-    shardSize=None,
-    fileDimensions=None,
-    skipEmptyTiles=None,
-    fileFormat=None,
-    formatOptions=None,
-    **kwargs,
-):
-    """Creates a batch task to export an ImageCollection as raster images to Google Drive.
-
-    Args:
-        ee_object: The image collection to export.
-        descriptions: A list of human-readable names of the tasks.
-        bucket: The name of a Cloud Storage bucket for the export.
-        fileNamePrefix: Cloud Storage object name prefix for the export.
-            Defaults to the name of the task.
-        dimensions: The dimensions of the exported image. Takes either a
-            single positive integer as the maximum dimension or "WIDTHxHEIGHT"
-            where WIDTH and HEIGHT are each positive integers.
-        region: The lon,lat coordinates for a LinearRing or Polygon
-            specifying the region to export. Can be specified as a nested
-            lists of numbers or a serialized string. Defaults to the image's
-            region.
-        scale: The resolution in meters per pixel. Defaults to the
-            native resolution of the image assset unless a crsTransform
-            is specified.
-        crs: The coordinate reference system of the exported image's
-            projection. Defaults to the image's default projection.
-        crsTransform: A comma-separated string of 6 numbers describing
-            the affine transform of the coordinate reference system of the
-            exported image's projection, in the order: xScale, xShearing,
-            xTranslation, yShearing, yScale and yTranslation. Defaults to
-            the image's native CRS transform.
-        maxPixels: The maximum allowed number of pixels in the exported
-            image. The task will fail if the exported region covers more
-            pixels in the specified projection. Defaults to 100,000,000.
-        shardSize: Size in pixels of the tiles in which this image will be
-            computed. Defaults to 256.
-        fileDimensions: The dimensions in pixels of each image file, if the
-            image is too large to fit in a single file. May specify a
-            single number to indicate a square shape, or a tuple of two
-            dimensions to indicate (width,height). Note that the image will
-            still be clipped to the overall image dimensions. Must be a
-            multiple of shardSize.
-        skipEmptyTiles: If true, skip writing empty (i.e. fully-masked)
-            image tiles. Defaults to false.
-        fileFormat: The string file format to which the image is exported.
-            Currently only 'GeoTIFF' and 'TFRecord' are supported, defaults to
-            'GeoTIFF'.
-        formatOptions: A dictionary of string keys to format specific options.
-        **kwargs: Holds other keyword arguments that may have been deprecated
-            such as 'crs_transform'.
-    """
-
-    if not isinstance(ee_object, ee.ImageCollection):
-        raise ValueError("The ee_object must be an ee.ImageCollection.")
-
-    try:
-        count = int(ee_object.size().getInfo())
-        print(f"Total number of images: {count}\n")
-
-        if (descriptions is not None) and (len(descriptions) != count):
-            print("The number of descriptions is not equal to the number of images.")
-            return
-
-        if descriptions is None:
-            descriptions = ee_object.aggregate_array("system:index").getInfo()
-
-        images = ee_object.toList(count)
-
-        if os.environ.get("USE_MKDOCS") is not None:  # skip if running GitHub CI.
-            return
-
-        for i in range(0, count):
-            image = ee.Image(images.get(i))
-            description = descriptions[i]
-            ee_export_image_to_cloud_storage(
-                image,
-                description,
-                bucket,
-                fileNamePrefix,
-                dimensions,
-                region,
-                scale,
-                crs,
-                crsTransform,
-                maxPixels,
-                shardSize,
-                fileDimensions,
-                skipEmptyTiles,
-                fileFormat,
-                formatOptions,
-                **kwargs,
-            )
-
-    except Exception as e:
-        print(e)
 
 
 def get_image_thumbnail(
@@ -2905,7 +2861,12 @@ def get_image_thumbnail(
     vis_params["crs"] = crs
     url = ee_object.getThumbURL(vis_params)
 
-    r = requests.get(url, stream=True, timeout=timeout, proxies=proxies)
+    try:
+        r = requests.get(url, stream=True, timeout=timeout, proxies=proxies)
+    except Exception as e:
+        print("An error occurred while downloading.")
+        print(e)
+
     if r.status_code != 200:
         print("An error occurred while downloading.")
         print(r.json()["error"]["message"])
@@ -2991,7 +2952,7 @@ def get_image_collection_thumbnails(
         print(e)
 
 
-def netcdf_to_ee(nc_file, var_names, band_names=None, lon="lon", lat="lat"):
+def netcdf_to_ee(nc_file, var_names, band_names=None, lon="lon", lat="lat", decimal=2):
     """
     Creates an ee.Image from netCDF variables band_names that are read from nc_file. Currently only supports variables in a regular longitude/latitude grid (EPSG:4326).
 
@@ -3001,6 +2962,7 @@ def netcdf_to_ee(nc_file, var_names, band_names=None, lon="lon", lat="lat"):
         band_names (list, optional): if given, the bands are renamed to band_names. Defaults to the original var_names
         lon (str, optional): the name of the longitude variable in the netCDF file. Defaults to "lon"
         lat (str, optional): the name of the latitude variable in the netCDF file. Defaults to "lat"
+        decimal (int, optional): the number of decimal places to round the longitude and latitude values to. Defaults to 2.
 
     Returns:
         image: An ee.Image
@@ -3015,9 +2977,14 @@ def netcdf_to_ee(nc_file, var_names, band_names=None, lon="lon", lat="lat"):
         )
 
     import numpy as np
+    from collections import Counter
+
+    def most_common_value(lst):
+        counter = Counter(lst)
+        most_common = counter.most_common(1)
+        return float(format(most_common[0][0], f".{decimal}f"))
 
     try:
-
         if not isinstance(nc_file, str):
             print("The input file must be a string.")
             return
@@ -3036,10 +3003,12 @@ def netcdf_to_ee(nc_file, var_names, band_names=None, lon="lon", lat="lat"):
 
         dim_lon = np.unique(np.ediff1d(lon_data))
         dim_lat = np.unique(np.ediff1d(lat_data))
+        dim_lon = [most_common_value(dim_lon)]
+        dim_lat = [most_common_value(dim_lat)]
 
-        if (len(dim_lon) != 1) or (len(dim_lat) != 1):
-            print("The netCDF file is not a regular longitude/latitude grid")
-            return
+        # if (len(dim_lon) != 1) or (len(dim_lat) != 1):
+        #     print("The netCDF file is not a regular longitude/latitude grid")
+        #     return
 
         try:
             data = data.to_array()
@@ -3054,7 +3023,7 @@ def netcdf_to_ee(nc_file, var_names, band_names=None, lon="lon", lat="lat"):
 
         data_np = np.array(data)
 
-        do_transpose = True  # To do: figure out if we need to tranpose the data or not
+        do_transpose = True  # To do: figure out if we need to transpose the data or not
         if do_transpose:
             try:
                 data_np = np.transpose(data_np, (0, 2, 1))
@@ -3062,7 +3031,7 @@ def netcdf_to_ee(nc_file, var_names, band_names=None, lon="lon", lat="lat"):
                 data_np = np.transpose(data_np)
 
         # Figure out if we need to roll the data or not
-        # (see https://github.com/giswqs/geemap/issues/285#issuecomment-791385176)
+        # (see https://github.com/gee-community/geemap/issues/285#issuecomment-791385176)
         if np.max(lon_data) > 180:
             data_np = np.roll(data_np, 180, axis=axis_for_roll)
             west_lon = lon_data[0] - 180
@@ -3112,7 +3081,6 @@ def numpy_to_ee(np_array, crs=None, transform=None, transformWkt=None, band_name
         return
 
     try:
-
         projection = ee.Projection(crs, transform, transformWkt)
         coords = ee.Image.pixelCoordinates(projection).floor().int32()
         x = coords.select("x")
@@ -3150,52 +3118,182 @@ def numpy_to_ee(np_array, crs=None, transform=None, transformWkt=None, band_name
         print(e)
 
 
-def ee_to_numpy(
-    ee_object, bands=None, region=None, properties=None, default_value=None
-):
-    """Extracts a rectangular region of pixels from an image into a 2D numpy array per band.
+def ee_to_numpy(ee_object, region=None, scale=None, bands=None, **kwargs):
+    """Extracts a rectangular region of pixels from an image into a numpy array.
 
     Args:
-        ee_object (object): The image to sample.
-        bands (list, optional): The list of band names to extract. Please make sure that all bands have the same spatial resolution. Defaults to None.
-        region (object, optional): The region whose projected bounding box is used to sample the image. The maximum number of pixels you can export is 262,144. Resampling and reprojecting all bands to a fixed scale can be useful. Defaults to the footprint in each band.
-        properties (list, optional): The properties to copy over from the sampled image. Defaults to all non-system properties.
-        default_value (float, optional): A default value used when a sampled pixel is masked or outside a band's footprint. Defaults to None.
+        ee_object (ee.Image): The image to sample.
+        region (ee.Geometry, optional): The region to sample. Defaults to None.
+        bands (list, optional): The list of band names to extract. Defaults to None.
+        scale (int, optional): A nominal scale in meters of the projection to sample in. Defaults to None.
 
     Returns:
-        array: A 3D numpy array.
+        np.ndarray: A 3D numpy array in the format of [row, column, band].
     """
     import numpy as np
 
-    if not isinstance(ee_object, ee.Image):
-        print("The input must be an ee.Image.")
-        return
+    if (region is not None) or (scale is not None):
+        ee_object = ee_object.clipToBoundsAndScale(geometry=region, scale=scale)
 
-    if region is None:
-        region = ee_object.geometry()
+    kwargs["expression"] = ee_object
+    kwargs["fileFormat"] = "NUMPY_NDARRAY"
+    if bands is not None:
+        kwargs["bandIds"] = bands
 
     try:
-
-        if bands is not None:
-            ee_object = ee_object.select(bands)
-        else:
-            bands = ee_object.bandNames().getInfo()
-
-        band_arrs = ee_object.sampleRectangle(
-            region=region, properties=properties, defaultValue=default_value
-        )
-        band_values = []
-
-        for band in bands:
-            band_arr = band_arrs.get(band).getInfo()
-            band_value = np.array(band_arr)
-            band_values.append(band_value)
-
-        image = np.dstack(band_values)
-        return image
-
+        struct_array = ee.data.computePixels(kwargs)
+        array = np.dstack(([struct_array[band] for band in struct_array.dtype.names]))
+        return array
     except Exception as e:
-        print(e)
+        raise Exception(e)
+
+
+def ee_to_xarray(
+    dataset,
+    drop_variables=None,
+    io_chunks=None,
+    n_images=-1,
+    mask_and_scale=True,
+    decode_times=True,
+    decode_timedelta=None,
+    use_cftime=None,
+    concat_characters=True,
+    decode_coords=True,
+    crs=None,
+    scale=None,
+    projection=None,
+    geometry=None,
+    primary_dim_name=None,
+    primary_dim_property=None,
+    ee_mask_value=None,
+    ee_initialize=True,
+    **kwargs,
+):
+    """Open an Earth Engine ImageCollection as an Xarray Dataset. This function is a wrapper for
+        xee. EarthEngineBackendEntrypoint.open_dataset().
+        See https://github.com/google/Xee/blob/main/xee/ext.py#L886
+
+    Args:
+        dataset: An asset ID for an ImageCollection, or an
+            ee.ImageCollection object.
+        drop_variables (optional): Variables or bands to drop before opening.
+        io_chunks (optional): Specifies the chunking strategy for loading data
+            from EE. By default, this automatically calculates optional chunks based
+            on the `request_byte_limit`.
+        n_images (optional): The max number of EE images in the collection to
+            open. Useful when there are a large number of images in the collection
+            since calculating collection size can be slow. -1 indicates that all
+            images should be included.
+        mask_and_scale (optional): Lazily scale (using scale_factor and
+            add_offset) and mask (using _FillValue).
+        decode_times (optional): Decode cf times (e.g., integers since "hours
+            since 2000-01-01") to np.datetime64.
+        decode_timedelta (optional): If True, decode variables and coordinates
+            with time units in {"days", "hours", "minutes", "seconds",
+            "milliseconds", "microseconds"} into timedelta objects. If False, leave
+            them encoded as numbers. If None (default), assume the same value of
+            decode_time.
+        use_cftime (optional): Only relevant if encoded dates come from a standard
+            calendar (e.g. "gregorian", "proleptic_gregorian", "standard", or not
+            specified).  If None (default), attempt to decode times to
+            ``np.datetime64[ns]`` objects; if this is not possible, decode times to
+            ``cftime.datetime`` objects. If True, always decode times to
+            ``cftime.datetime`` objects, regardless of whether or not they can be
+            represented using ``np.datetime64[ns]`` objects.  If False, always
+            decode times to ``np.datetime64[ns]`` objects; if this is not possible
+            raise an error.
+        concat_characters (optional): Should character arrays be concatenated to
+            strings, for example: ["h", "e", "l", "l", "o"] -> "hello"
+        decode_coords (optional): bool or {"coordinates", "all"}, Controls which
+            variables are set as coordinate variables: - "coordinates" or True: Set
+            variables referred to in the ``'coordinates'`` attribute of the datasets
+            or individual variables as coordinate variables. - "all": Set variables
+            referred to in  ``'grid_mapping'``, ``'bounds'`` and other attributes as
+            coordinate variables.
+        crs (optional): The coordinate reference system (a CRS code or WKT
+            string). This defines the frame of reference to coalesce all variables
+            upon opening. By default, data is opened with `EPSG:4326'.
+        scale (optional): The scale in the `crs` or `projection`'s units of
+            measure -- either meters or degrees. This defines the scale that all
+            data is represented in upon opening. By default, the scale is 1° when
+            the CRS is in degrees or 10,000 when in meters.
+        projection (optional): Specify an `ee.Projection` object to define the
+            `scale` and `crs` (or other coordinate reference system) with which to
+            coalesce all variables upon opening. By default, the scale and reference
+            system is set by the the `crs` and `scale` arguments.
+        geometry (optional): Specify an `ee.Geometry` to define the regional
+            bounds when opening the data. When not set, the bounds are defined by
+            the CRS's 'area_of_use` boundaries. If those aren't present, the bounds
+            are derived from the geometry of the first image of the collection.
+        primary_dim_name (optional): Override the name of the primary dimension of
+            the output Dataset. By default, the name is 'time'.
+        primary_dim_property (optional): Override the `ee.Image` property for
+            which to derive the values of the primary dimension. By default, this is
+            'system:time_start'.
+        ee_mask_value (optional): Value to mask to EE nodata values. By default,
+            this is 'np.iinfo(np.int32).max' i.e. 2147483647.
+        request_byte_limit: the max allowed bytes to request at a time from Earth
+            Engine. By default, it is 48MBs.
+        ee_initialize (optional): Whether to initialize ee with the high-volume endpoint. Defaults to True.
+
+    Returns:
+      An xarray.Dataset that streams in remote data from Earth Engine.
+    """
+    try:
+        import xee
+    except ImportError:
+        install_package("xee")
+        import xee
+
+    import xarray as xr
+
+    kwargs["drop_variables"] = drop_variables
+    kwargs["io_chunks"] = io_chunks
+    kwargs["n_images"] = n_images
+    kwargs["mask_and_scale"] = mask_and_scale
+    kwargs["decode_times"] = decode_times
+    kwargs["decode_timedelta"] = decode_timedelta
+    kwargs["use_cftime"] = use_cftime
+    kwargs["concat_characters"] = concat_characters
+    kwargs["decode_coords"] = decode_coords
+    kwargs["crs"] = crs
+    kwargs["scale"] = scale
+    kwargs["projection"] = projection
+    kwargs["geometry"] = geometry
+    kwargs["primary_dim_name"] = primary_dim_name
+    kwargs["primary_dim_property"] = primary_dim_property
+    kwargs["ee_mask_value"] = ee_mask_value
+    kwargs["engine"] = "ee"
+
+    if ee_initialize:
+        opt_url = "https://earthengine-highvolume.googleapis.com"
+        ee.Initialize(opt_url=opt_url)
+
+    if isinstance(dataset, str):
+        if not dataset.startswith("ee://"):
+            dataset = "ee://" + dataset
+    elif isinstance(dataset, ee.Image):
+        dataset = ee.ImageCollection(dataset)
+    elif isinstance(dataset, ee.ImageCollection):
+        pass
+    elif isinstance(dataset, list):
+        items = []
+        for item in dataset:
+            if isinstance(item, str) and not item.startswith("ee://"):
+                item = "ee://" + item
+            items.append(item)
+        dataset = items
+    else:
+        raise ValueError(
+            "The dataset must be an ee.Image, ee.ImageCollection, or a list of ee.Image."
+        )
+
+    if isinstance(dataset, list):
+        ds = xr.open_mfdataset(dataset, **kwargs)
+    else:
+        ds = xr.open_dataset(dataset, **kwargs)
+
+    return ds
 
 
 def download_ee_video(collection, video_args, out_gif, timeout=300, proxies=None):
@@ -3221,7 +3319,6 @@ def download_ee_video(collection, video_args, out_gif, timeout=300, proxies=None
         roi = video_args["region"]
 
         if not isinstance(roi, ee.Geometry):
-
             try:
                 roi = roi.geometry()
             except Exception as e:
@@ -3310,7 +3407,7 @@ def show_youtube(id="h0pz3S6Tvx0"):
     try:
         out = widgets.Output(layout={"width": "815px"})
         # layout={'border': '1px solid black', 'width': '815px'})
-        out.clear_output(wait=True)
+        out.outputs = ()
         display(out)
         with out:
             display(YouTubeVideo(id, width=800, height=450))
@@ -3357,12 +3454,11 @@ def create_colorbar(
     import decimal
 
     # import io
-    import pkg_resources
     from colour import Color
     from PIL import Image, ImageDraw, ImageFont
 
     warnings.simplefilter("ignore")
-    pkg_dir = os.path.dirname(pkg_resources.resource_filename("geemap", "geemap.py"))
+    pkg_dir = str(importlib.resources.files("geemap").joinpath("geemap.py").parent)
 
     if out_file is None:
         filename = "colorbar_" + random_string() + ".png"
@@ -3471,7 +3567,6 @@ def create_colorbar(
         return
 
     if add_labels:
-
         default_font = os.path.join(pkg_dir, "data/fonts/arial.ttf")
         if font_type == "arial.ttf":
             font = ImageFont.truetype(default_font, font_size)
@@ -3513,7 +3608,6 @@ def create_colorbar(
         background.paste(im, xy, im)
 
         for index, label in enumerate(labels):
-
             w_tmp, h_tmp = draw.textsize(label, font)
 
             if vertical:
@@ -3536,8 +3630,8 @@ def create_colorbar(
 
 def save_colorbar(
     out_fig=None,
-    width=6.0,
-    height=0.4,
+    width=4.0,
+    height=0.3,
     vmin=0,
     vmax=1.0,
     palette=None,
@@ -3545,12 +3639,13 @@ def save_colorbar(
     cmap="gray",
     discrete=False,
     label=None,
-    label_size=12,
+    label_size=10,
     label_weight="normal",
-    tick_size=10,
-    bg_color=None,
+    tick_size=8,
+    bg_color="white",
     orientation="horizontal",
     dpi="figure",
+    transparent=False,
     show_colorbar=True,
     **kwargs,
 ):
@@ -3558,8 +3653,8 @@ def save_colorbar(
 
     Args:
         out_fig (str): Path to the output image.
-        width (float): Width of the colorbar in inches. Default is 6.0.
-        height (float): Height of the colorbar in inches. Default is 0.4.
+        width (float): Width of the colorbar in inches. Default is 4.0.
+        height (float): Height of the colorbar in inches. Default is 0.3.
         vmin (float): Minimum value of the colorbar. Default is 0.
         vmax (float): Maximum value of the colorbar. Default is 1.0.
         palette (list): List of colors to use for the colorbar. It can also be a cmap name, such as ndvi, ndwi, dem, coolwarm. Default is None.
@@ -3570,10 +3665,12 @@ def save_colorbar(
         label_size (int, optional): Font size for the colorbar label. Defaults to 12.
         label_weight (str, optional): Font weight for the colorbar label, can be "normal", "bold", etc. Defaults to "normal".
         tick_size (int, optional): Font size for the colorbar tick labels. Defaults to 10.
-        bg_color (str, optional): Background color for the colorbar. Defaults to None.
+        bg_color (str, optional): Background color for the colorbar. Defaults to "white".
         orientation (str, optional): Orientation of the colorbar, such as "vertical" and "horizontal". Defaults to "horizontal".
-        dpi (float | str, optional): The resolution in dots per inch.  If 'figure', use the figure's dpi value.. Defaults to "figure".
+        dpi (float | str, optional): The resolution in dots per inch.  If 'figure', use the figure's dpi value. Defaults to "figure".
+        transparent (bool, optional): Whether to make the background transparent. Defaults to False.
         show_colorbar (bool, optional): Whether to show the colorbar. Defaults to True.
+        **kwargs: Other keyword arguments to pass to matplotlib.pyplot.savefig().
 
     Returns:
         str: Path to the output image.
@@ -3608,13 +3705,10 @@ def save_colorbar(
         alpha = vis_params["opacity"]
         if type(alpha) not in (int, float):
             raise ValueError("The provided opacity value must be type scalar.")
-    elif "alpha" in kwargs:
-        alpha = kwargs["alpha"]
     else:
         alpha = 1
 
     if cmap is not None:
-
         cmap = mpl.pyplot.get_cmap(cmap)
         norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
 
@@ -3632,7 +3726,6 @@ def save_colorbar(
             norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
 
     elif cmap is not None:
-
         cmap = mpl.pyplot.get_cmap(cmap)
         norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
 
@@ -3648,7 +3741,16 @@ def save_colorbar(
     if label is not None:
         cb.set_label(label=label, size=label_size, weight=label_weight)
     cb.ax.tick_params(labelsize=tick_size)
-    fig.savefig(out_fig, dpi=dpi, facecolor=bg_color, bbox_inches="tight")
+
+    if transparent:
+        bg_color = None
+
+    if bg_color is not None:
+        kwargs["facecolor"] = bg_color
+    if "bbox_inches" not in kwargs:
+        kwargs["bbox_inches"] = "tight"
+
+    fig.savefig(out_fig, dpi=dpi, transparent=transparent, **kwargs)
     if not show_colorbar:
         plt.close(fig)
     return out_fig
@@ -3688,7 +3790,6 @@ def geocode(location, max_rows=10, reverse=False):
         location (str): Place name or address
         max_rows (int, optional): Maximum number of records to return. Defaults to 10.
         reverse (bool, optional): Search place based on coordinates. Defaults to False.
-
     Returns:
         list: Returns a list of locations.
     """
@@ -3699,7 +3800,6 @@ def geocode(location, max_rows=10, reverse=False):
         return None
 
     if not reverse:
-
         locations = []
         addresses = set()
         g = geocoder.arcgis(location, maxRows=max_rows)
@@ -3722,9 +3822,6 @@ def geocode(location, max_rows=10, reverse=False):
             elif " " in location:
                 latlon = [float(x) for x in location.split(" ")]
             else:
-                print(
-                    "The lat-lon coordinates should be numbers only and separated by comma or space, such as 40.2, -100.3"
-                )
                 return
             g = geocoder.arcgis(latlon, method="reverse")
             locations = []
@@ -3812,25 +3909,69 @@ def latlon_from_text(location):
         return None
 
 
-def search_ee_data(keywords):
+def search_ee_data(
+    keywords,
+    regex=False,
+    source="ee",
+    types=None,
+    keys=["id", "provider", "tags", "title"],
+):
     """Searches Earth Engine data catalog.
 
     Args:
-        keywords (str): Keywords to search for can be id, provider, tag and so on
+        keywords (str | list): Keywords to search for can be id, provider, tag and so on. Split by space if string, e.g. "1 2" becomes ['1','2'].
+        regex (bool, optional): Allow searching for regular expressions. Defaults to false.
+        source (str, optional): Can be 'ee', 'community' or 'all'. Defaults to 'ee'. For more details, see https://github.com/samapriya/awesome-gee-community-datasets/blob/master/community_datasets.json
+        types (list, optional): List of valid collection types. Defaults to None so no filter is applied. A possible filter ['image_collection']
+        keys (list, optional): List of metadata fields to search from.  Defaults to ['id','provider','tags','title']
 
     Returns:
-        list: Returns a lit of assets.
+        list: Returns a list of assets.
     """
+    if isinstance(keywords, str):
+        keywords = keywords.split(" ")
+
+    import re
+    from functools import reduce
+
+    def search_collection(pattern, dict_):
+        if regex:
+            if any(re.match(pattern, dict_[key]) for key in keys):
+                return dict_
+        elif any(pattern in dict_[key] for key in keys):
+            return dict_
+        return {}
+
+    def search_all(pattern):
+        # updated daily
+        a = "https://raw.githubusercontent.com/samapriya/Earth-Engine-Datasets-List/master/gee_catalog.json"
+        b = "https://raw.githubusercontent.com/samapriya/awesome-gee-community-datasets/master/community_datasets.json"
+        sources = {"ee": [a], "community": [b], "all": [a, b]}
+        matches = []
+        for link in sources[source]:
+            r = requests.get(link)
+            catalog_list = r.json()
+            matches += [search_collection(pattern, x) for x in catalog_list]
+        matches = [x for x in matches if x]
+        if types:
+            return [x for x in matches if x["type"] in types]
+        return matches
+
     try:
-        cmd = f'geeadd search --keywords "{str(keywords)}"'
-        output = os.popen(cmd).read()
-        start_index = output.index("[")
-        assets = eval(output[start_index:])
+        assets = list(
+            {json.dumps(match) for match in search_all(pattern=k)} for k in keywords
+        )
+        assets = sorted(list(reduce(set.intersection, assets)))
+        assets = [json.loads(x) for x in assets]
 
         results = []
         for asset in assets:
-            asset_dates = asset["start_date"] + " - " + asset["end_date"]
-            asset_snippet = asset["ee_id_snippet"]
+            asset_dates = (
+                asset.get("start_date", "Unknown")
+                + " - "
+                + asset.get("end_date", "Unknown")
+            )
+            asset_snippet = asset["id"]
             if "ee." in asset_snippet:
                 start_index = asset_snippet.index("'") + 1
                 end_index = asset_snippet.index("'", start_index)
@@ -3841,9 +3982,7 @@ def search_ee_data(keywords):
             asset["dates"] = asset_dates
             asset["id"] = asset_id
             asset["uid"] = asset_id.replace("/", "_")
-            # asset['url'] = 'https://developers.google.com/earth-engine/datasets/catalog/' + asset['uid']
-            # asset['thumbnail'] = 'https://mw1.google.com/ges/dd/images/{}_sample.png'.format(
-            #     asset['uid'])
+
             results.append(asset)
 
         return results
@@ -3901,61 +4040,75 @@ def ee_data_html(asset):
     Returns:
         str: A string containing HTML.
     """
-    template = """
-        <html>
-        <body>
-            <h3>asset_title</h3>
-            <h4>Dataset Availability</h4>
-                <p style="margin-left: 40px">asset_dates</p>
-            <h4>Earth Engine Snippet</h4>
-                <p style="margin-left: 40px">ee_id_snippet</p>
-            <h4>Earth Engine Data Catalog</h4>
-                <p style="margin-left: 40px"><a href="asset_url" target="_blank">asset_id</a></p>
-            <h4>Dataset Thumbnail</h4>
-                <img src="thumbnail_url">
-        </body>
-        </html>
-    """
-
     try:
+        asset_title = asset.get("title", "Unknown")
+        asset_dates = asset.get("dates", "Unknown")
+        ee_id_snippet = asset.get("id", "Unknown")
+        asset_uid = asset.get("uid", None)
+        asset_url = asset.get("asset_url", "")
+        code_url = asset.get("sample_code", None)
+        thumbnail_url = asset.get("thumbnail_url", None)
+        asset_type = asset.get("type", "Unknown")
 
-        text = template.replace("asset_title", asset["title"])
-        text = text.replace("asset_dates", asset["dates"])
-        text = text.replace("ee_id_snippet", asset["ee_id_snippet"])
-        text = text.replace("asset_id", asset["id"])
-        text = text.replace("asset_url", asset["asset_url"])
-        # asset['thumbnail'] = ee_data_thumbnail(asset['id'])
-        text = text.replace("thumbnail_url", asset["thumbnail_url"])
+        if asset_type == "image":
+            ee_id_snippet = "ee.Image('{}')".format(ee_id_snippet)
+        elif asset_type == "image_collection":
+            ee_id_snippet = "ee.ImageCollection('{}')".format(ee_id_snippet)
+        elif asset_type == "table":
+            ee_id_snippet = "ee.FeatureCollection('{}')".format(ee_id_snippet)
 
-        return text
+        if not code_url and asset_uid:
+            coder_url = f"""https://code.earthengine.google.com/?scriptPath=Examples%3ADatasets%2F{asset_uid}"""
+        else:
+            coder_url = code_url
+
+        ## ee datasets always have a asset_url, and should have a thumbnail
+        catalog = (
+            bool(asset_url)
+            * f"""
+                    <h4>Data Catalog</h4>
+                        <p style="margin-left: 40px"><a href="{asset_url.replace('terms-of-use','description')}" target="_blank">Description</a></p>
+                        <p style="margin-left: 40px"><a href="{asset_url.replace('terms-of-use','bands')}" target="_blank">Bands</a></p>
+                        <p style="margin-left: 40px"><a href="{asset_url.replace('terms-of-use','image-properties')}" target="_blank">Properties</a></p>
+                        <p style="margin-left: 40px"><a href="{coder_url}" target="_blank">Example</a></p>
+                    """
+        )
+        thumbnail = (
+            bool(thumbnail_url)
+            * f"""
+                    <h4>Dataset Thumbnail</h4>
+                    <img src="{thumbnail_url}">
+                    """
+        )
+        ## only community datasets have a code_url
+        alternative = (
+            bool(code_url)
+            * f"""
+                    <h4>Community Catalog</h4>
+                        <p style="margin-left: 40px">{asset.get('provider','Provider unknown')}</p>
+                        <p style="margin-left: 40px">{asset.get('tags','Tags unknown')}</p>
+                        <p style="margin-left: 40px"><a href="{coder_url}" target="_blank">Example</a></p>
+                    """
+        )
+
+        template = f"""
+            <html>
+            <body>
+                <h3>{asset_title}</h3>
+                <h4>Dataset Availability</h4>
+                    <p style="margin-left: 40px">{asset_dates}</p>
+                <h4>Earth Engine Snippet</h4>
+                    <p style="margin-left: 40px">{ee_id_snippet}</p>
+                {catalog}
+                {alternative}
+                {thumbnail}
+            </body>
+            </html>
+        """
+        return template
 
     except Exception as e:
         print(e)
-
-
-def create_code_cell(code="", where="below"):
-    """Creates a code cell in the IPython Notebook.
-
-    Args:
-        code (str, optional): Code to fill the new code cell with. Defaults to ''.
-        where (str, optional): Where to add the new code cell. It can be one of the following: above, below, at_bottom. Defaults to 'below'.
-    """
-
-    import base64
-
-    from IPython.display import Javascript, display
-
-    encoded_code = (base64.b64encode(str.encode(code))).decode()
-    display(
-        Javascript(
-            """
-        var code = IPython.notebook.insert_cell_{0}('code');
-        code.set_text(atob("{1}"));
-    """.format(
-                where, encoded_code
-            )
-        )
-    )
 
 
 def ee_api_to_csv(outfile=None, timeout=300, proxies=None):
@@ -3966,11 +4119,9 @@ def ee_api_to_csv(outfile=None, timeout=300, proxies=None):
         timeout (int, optional): Timeout in seconds. Defaults to 300.
         proxies (dict, optional): Proxy settings. Defaults to None.
     """
-    import pkg_resources
-
     from bs4 import BeautifulSoup
 
-    pkg_dir = os.path.dirname(pkg_resources.resource_filename("geemap", "geemap.py"))
+    pkg_dir = str(importlib.resources.files("geemap").joinpath("geemap.py").parent)
     data_dir = os.path.join(pkg_dir, "data")
     template_dir = os.path.join(data_dir, "template")
     csv_file = os.path.join(template_dir, "ee_api_docs.csv")
@@ -3989,7 +4140,6 @@ def ee_api_to_csv(outfile=None, timeout=300, proxies=None):
     url = "https://developers.google.com/earth-engine/api_docs"
 
     try:
-
         r = requests.get(url, timeout=timeout, proxies=proxies)
         soup = BeautifulSoup(r.content, "html.parser")
 
@@ -4087,9 +4237,7 @@ def read_api_csv():
     """
     import copy
 
-    import pkg_resources
-
-    pkg_dir = os.path.dirname(pkg_resources.resource_filename("geemap", "geemap.py"))
+    pkg_dir = str(importlib.resources.files("geemap").joinpath("geemap.py").parent)
     data_dir = os.path.join(pkg_dir, "data")
     template_dir = os.path.join(data_dir, "template")
     csv_file = os.path.join(template_dir, "ee_api_docs.csv")
@@ -4104,7 +4252,6 @@ def read_api_csv():
         csv_reader = csv.DictReader(f, delimiter="\t")
 
         for line in csv_reader:
-
             out_html_lines = copy.copy(in_html_lines)
             out_html_lines[65] = in_html_lines[65].replace(
                 "function_name", line["name"]
@@ -4222,7 +4369,7 @@ def build_api_tree(api_dict, output_widget, layout_width="100%"):
             values = api_dict[name]
 
             with output_widget:
-                output_widget.clear_output()
+                output_widget.outputs = ()
                 html_widget = widgets.HTML(value=values["html"])
                 display(html_widget)
 
@@ -4337,8 +4484,8 @@ def ee_search(asset_limit=100):
     def search_type_changed(change):
         search_box.value = ""
 
-        output_widget.clear_output()
-        tree_widget.clear_output()
+        output_widget.outputs = ()
+        tree_widget.outputs = ()
         if change["new"] == "Scripts":
             search_box.placeholder = "Filter scripts..."
             left_widget.children = [search_type, repo_tree]
@@ -4356,7 +4503,7 @@ def ee_search(asset_limit=100):
             else:
                 ee_api_tree = flags.docs
             with tree_widget:
-                tree_widget.clear_output()
+                tree_widget.outputs = ()
                 display(ee_api_tree)
                 right_widget.children = [output_widget]
             search_box.value = ""
@@ -4374,7 +4521,7 @@ def ee_search(asset_limit=100):
                 flags.asset_import = asset_widget
 
             with tree_widget:
-                tree_widget.clear_output()
+                tree_widget.outputs = ()
                 display(flags.assets)
             right_widget.children = [flags.asset_import]
             search_box.value = ""
@@ -4382,29 +4529,28 @@ def ee_search(asset_limit=100):
     search_type.observe(search_type_changed, names="value")
 
     def search_box_callback(text):
-
         if search_type.value == "Docs":
             with tree_widget:
                 if text.value == "":
                     print("Loading...")
-                    tree_widget.clear_output(wait=True)
+                    tree_widget.outputs = ()
                     display(flags.docs)
                 else:
-                    tree_widget.clear_output()
+                    tree_widget.outputs = ()
                     print("Searching...")
-                    tree_widget.clear_output(wait=True)
+                    tree_widget.outputs = ()
                     sub_tree = search_api_tree(text.value, flags.docs_dict)
                     display(sub_tree)
         elif search_type.value == "Assets":
             with tree_widget:
                 if text.value == "":
                     print("Loading...")
-                    tree_widget.clear_output(wait=True)
+                    tree_widget.outputs = ()
                     display(flags.assets)
                 else:
-                    tree_widget.clear_output()
+                    tree_widget.outputs = ()
                     print("Searching...")
-                    tree_widget.clear_output(wait=True)
+                    tree_widget.outputs = ()
                     sub_tree = search_api_tree(text.value, flags.asset_dict)
                     display(sub_tree)
 
@@ -4428,7 +4574,6 @@ def ee_user_id():
 
 
 def build_asset_tree(limit=100):
-
     import geeadd.ee_report as geeadd
 
     warnings.filterwarnings("ignore")
@@ -4567,7 +4712,7 @@ def build_repo_tree(out_dir=None, name="gee_repos"):
     URLs = {
         # 'Owner': 'https://earthengine.googlesource.com/{ee_user_id()}/default',
         "Writer": "",
-        "Reader": "https://github.com/giswqs/geemap",
+        "Reader": "https://github.com/gee-community/geemap",
         "Examples": "https://github.com/giswqs/earthengine-py-examples",
         "Archive": "https://earthengine.googlesource.com/EGU2017-EE101",
     }
@@ -4623,7 +4768,6 @@ def build_repo_tree(out_dir=None, name="gee_repos"):
         node.observe(handle_folder_click, "selected")
 
     def handle_clone_click(b):
-
         url = path_widget.value
         default_dir = os.path.join(repo_dir, "Examples")
         if url == "":
@@ -4772,16 +4916,15 @@ def file_browser(
     import_btn.on_click(import_btn_clicked)
 
     def search_box_callback(text):
-
         with tree_widget:
             if text.value == "":
                 print("Loading...")
-                tree_widget.clear_output(wait=True)
+                tree_widget.outputs = ()
                 display(tree)
             else:
-                tree_widget.clear_output()
+                tree_widget.outputs = ()
                 print("Searching...")
-                tree_widget.clear_output(wait=True)
+                tree_widget.outputs = ()
                 sub_tree = search_api_tree(text.value, tree_dict)
                 display(sub_tree)
 
@@ -4830,7 +4973,6 @@ def file_browser(
         root_node.observe(handle_folder_click, "selected")
 
     for root, d_names, f_names in os.walk(in_dir):
-
         if not show_hidden:
             folders = root.split(sep)
             for folder in folders:
@@ -4875,7 +5017,7 @@ def file_browser(
                 node.observe(handle_file_click, "selected")
 
     with tree_widget:
-        tree_widget.clear_output()
+        tree_widget.outputs = ()
         display(tree)
 
     if return_sep_widgets:
@@ -4889,7 +5031,7 @@ def file_browser(
 ########################################
 
 
-def date_sequence(start, end, unit, date_format="YYYY-MM-dd"):
+def date_sequence(start, end, unit, date_format="YYYY-MM-dd", step=1):
     """Creates a date sequence.
 
     Args:
@@ -4897,6 +5039,7 @@ def date_sequence(start, end, unit, date_format="YYYY-MM-dd"):
         end (str): The end date, e.g., '2000-12-31'.
         unit (str): One of 'year', 'quarter', 'month' 'week', 'day', 'hour', 'minute', or 'second'.
         date_format (str, optional): A pattern, as described at http://joda-time.sourceforge.net/apidocs/org/joda/time/format/DateTimeFormat.html. Defaults to 'YYYY-MM-dd'.
+        step (int, optional): The step size. Defaults to 1.
 
     Returns:
         ee.List: A list of date sequence.
@@ -4925,6 +5068,8 @@ def date_sequence(start, end, unit, date_format="YYYY-MM-dd"):
     if unit != "quarter":
         count = ee.Number(end_date.difference(start_date, unit)).toInt()
         num_seq = ee.List.sequence(0, count)
+        if step > 1:
+            num_seq = num_seq.slice(0, num_seq.size(), step)
         date_seq = num_seq.map(
             lambda d: start_date.advance(d, unit).format(date_format)
         )
@@ -4979,9 +5124,8 @@ def vis_to_qml(ee_class_table, out_qml):
         ee_class_table (str): An Earth Engine class table with triple quotes.
         out_qml (str): File path to the output QGIS Layer Style (.qml).
     """
-    import pkg_resources
 
-    pkg_dir = os.path.dirname(pkg_resources.resource_filename("geemap", "geemap.py"))
+    pkg_dir = str(importlib.resources.files("geemap").joinpath("geemap.py").parent)
     data_dir = os.path.join(pkg_dir, "data")
     template_dir = os.path.join(data_dir, "template")
     qml_template = os.path.join(template_dir, "NLCD.qml")
@@ -5028,9 +5172,7 @@ def create_nlcd_qml(out_qml):
     Args:
         out_qml (str): File path to the output qml.
     """
-    import pkg_resources
-
-    pkg_dir = os.path.dirname(pkg_resources.resource_filename("geemap", "geemap.py"))
+    pkg_dir = str(importlib.resources.files("geemap").joinpath("geemap.py").parent)
     data_dir = os.path.join(pkg_dir, "data")
     template_dir = os.path.join(data_dir, "template")
     qml_template = os.path.join(template_dir, "NLCD.qml")
@@ -5056,6 +5198,9 @@ def load_GeoTIFF(URL):
     """
 
     uri = URL.strip()
+
+    if uri.startswith("http"):
+        uri = get_direct_url(uri)
 
     if uri.startswith("https://storage.googleapis.com/"):
         uri = uri.replace("https://storage.googleapis.com/", "gs://")
@@ -5096,6 +5241,9 @@ def load_GeoTIFFs(URLs):
     for URL in URLs:
         uri = URL.strip()
 
+        if uri.startswith("http"):
+            uri = get_direct_url(uri)
+
         if uri.startswith("https://storage.googleapis.com/"):
             uri = uri.replace("https://storage.googleapis.com/", "gs://")
         elif uri.startswith("https://storage.cloud.google.com/"):
@@ -5121,7 +5269,7 @@ def load_GeoTIFFs(URLs):
 def cog_tile(
     url,
     bands=None,
-    titiler_endpoint="https://titiler.xyz",
+    titiler_endpoint=None,
     timeout=300,
     proxies=None,
     **kwargs,
@@ -5139,6 +5287,9 @@ def cog_tile(
         tuple: Returns the COG Tile layer URL and bounds.
     """
 
+    titiler_endpoint = check_titiler_endpoint(titiler_endpoint)
+    url = get_direct_url(url)
+
     kwargs["url"] = url
 
     band_names = cog_bands(url, titiler_endpoint)
@@ -5155,8 +5306,10 @@ def cog_tile(
             raise ValueError("Bands must be a list of integers or strings.")
 
     if "palette" in kwargs:
-        kwargs["colormap_name"] = kwargs["palette"]
-        del kwargs["palette"]
+        kwargs["colormap_name"] = kwargs.pop("palette")
+
+    if "colormap" in kwargs:
+        kwargs["colormap_name"] = kwargs.pop("colormap")
 
     if "rescale" not in kwargs:
         stats = cog_stats(url, titiler_endpoint)
@@ -5181,7 +5334,7 @@ def cog_tile(
 
 def cog_mosaic(
     links,
-    titiler_endpoint="https://titiler.xyz",
+    titiler_endpoint=None,
     username="anonymous",
     layername=None,
     overwrite=False,
@@ -5207,6 +5360,7 @@ def cog_mosaic(
         str: The tile URL for the COG mosaic.
     """
 
+    titiler_endpoint = check_titiler_endpoint(titiler_endpoint)
     if layername is None:
         layername = "layer_" + random_string(5)
 
@@ -5249,7 +5403,7 @@ def cog_mosaic(
 def cog_mosaic_from_file(
     filepath,
     skip_rows=0,
-    titiler_endpoint="https://titiler.xyz",
+    titiler_endpoint=None,
     username="anonymous",
     layername=None,
     overwrite=False,
@@ -5272,6 +5426,7 @@ def cog_mosaic_from_file(
     """
     import urllib
 
+    titiler_endpoint = check_titiler_endpoint(titiler_endpoint)
     links = []
     if filepath.startswith("http"):
         data = urllib.request.urlopen(filepath)
@@ -5290,7 +5445,7 @@ def cog_mosaic_from_file(
     return mosaic
 
 
-def cog_bounds(url, titiler_endpoint="https://titiler.xyz", timeout=300):
+def cog_bounds(url, titiler_endpoint=None, timeout=300):
     """Get the bounding box of a Cloud Optimized GeoTIFF (COG).
 
     Args:
@@ -5301,6 +5456,9 @@ def cog_bounds(url, titiler_endpoint="https://titiler.xyz", timeout=300):
     Returns:
         list: A list of values representing [left, bottom, right, top]
     """
+
+    titiler_endpoint = check_titiler_endpoint(titiler_endpoint)
+    url = get_direct_url(url)
 
     r = requests.get(
         f"{titiler_endpoint}/cog/bounds", params={"url": url}, timeout=timeout
@@ -5313,7 +5471,7 @@ def cog_bounds(url, titiler_endpoint="https://titiler.xyz", timeout=300):
     return bounds
 
 
-def cog_center(url, titiler_endpoint="https://titiler.xyz"):
+def cog_center(url, titiler_endpoint=None):
     """Get the centroid of a Cloud Optimized GeoTIFF (COG).
 
     Args:
@@ -5323,12 +5481,15 @@ def cog_center(url, titiler_endpoint="https://titiler.xyz"):
     Returns:
         tuple: A tuple representing (longitude, latitude)
     """
+
+    titiler_endpoint = check_titiler_endpoint(titiler_endpoint)
+    url = get_direct_url(url)
     bounds = cog_bounds(url, titiler_endpoint)
     center = ((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2)  # (lat, lon)
     return center
 
 
-def cog_bands(url, titiler_endpoint="https://titiler.xyz", timeout=300):
+def cog_bands(url, titiler_endpoint=None, timeout=300):
     """Get band names of a Cloud Optimized GeoTIFF (COG).
 
     Args:
@@ -5340,6 +5501,8 @@ def cog_bands(url, titiler_endpoint="https://titiler.xyz", timeout=300):
         list: A list of band names
     """
 
+    titiler_endpoint = check_titiler_endpoint(titiler_endpoint)
+    url = get_direct_url(url)
     r = requests.get(
         f"{titiler_endpoint}/cog/info",
         params={
@@ -5352,7 +5515,7 @@ def cog_bands(url, titiler_endpoint="https://titiler.xyz", timeout=300):
     return bands
 
 
-def cog_stats(url, titiler_endpoint="https://titiler.xyz", timeout=300):
+def cog_stats(url, titiler_endpoint=None, timeout=300):
     """Get band statistics of a Cloud Optimized GeoTIFF (COG).
 
     Args:
@@ -5364,6 +5527,8 @@ def cog_stats(url, titiler_endpoint="https://titiler.xyz", timeout=300):
         list: A dictionary of band statistics.
     """
 
+    titiler_endpoint = check_titiler_endpoint(titiler_endpoint)
+    url = get_direct_url(url)
     r = requests.get(
         f"{titiler_endpoint}/cog/statistics",
         params={
@@ -5375,9 +5540,7 @@ def cog_stats(url, titiler_endpoint="https://titiler.xyz", timeout=300):
     return r
 
 
-def cog_info(
-    url, titiler_endpoint="https://titiler.xyz", return_geojson=False, timeout=300
-):
+def cog_info(url, titiler_endpoint=None, return_geojson=False, timeout=300):
     """Get band statistics of a Cloud Optimized GeoTIFF (COG).
 
     Args:
@@ -5389,6 +5552,8 @@ def cog_info(
         list: A dictionary of band info.
     """
 
+    titiler_endpoint = check_titiler_endpoint(titiler_endpoint)
+    url = get_direct_url(url)
     info = "info"
     if return_geojson:
         info = "info.geojson"
@@ -5409,7 +5574,7 @@ def cog_pixel_value(
     lat,
     url,
     bidx=None,
-    titiler_endpoint="https://titiler.xyz",
+    titiler_endpoint=None,
     timeout=300,
     **kwargs,
 ):
@@ -5418,7 +5583,7 @@ def cog_pixel_value(
     Args:
         lon (float): Longitude of the pixel.
         lat (float): Latitude of the pixel.
-        url (str): HTTP URL to a COG, e.g., 'https://opendata.digitalglobe.com/events/california-fire-2020/pre-event/2018-02-16/pine-gulch-fire20/1030010076004E00.tif'
+        url (str): HTTP URL to a COG, e.g., 'https://github.com/opengeos/data/releases/download/raster/Libya-2023-07-01.tif'
         bidx (str, optional): Dataset band indexes (e.g bidx=1, bidx=1&bidx=2&bidx=3). Defaults to None.
         titiler_endpoint (str, optional): Titiler endpoint, e.g., "https://titiler.xyz", "planetary-computer", "pc". Defaults to None.
         timeout (int, optional): Timeout in seconds. Defaults to 300.
@@ -5427,6 +5592,8 @@ def cog_pixel_value(
         list: A dictionary of band info.
     """
 
+    titiler_endpoint = check_titiler_endpoint(titiler_endpoint)
+    url = get_direct_url(url)
     titiler_endpoint = check_titiler_endpoint(titiler_endpoint)
     kwargs["url"] = url
     if bidx is not None:
@@ -5484,6 +5651,7 @@ def stac_tile(
         titiler_endpoint = "planetary-computer"
 
     if url is not None:
+        url = get_direct_url(url)
         kwargs["url"] = url
     if collection is not None:
         kwargs["collection"] = collection
@@ -5501,6 +5669,9 @@ def stac_tile(
         assets = assets[0]
 
     titiler_endpoint = check_titiler_endpoint(titiler_endpoint)
+
+    if "expression" in kwargs and ("asset_as_band" not in kwargs):
+        kwargs["asset_as_band"] = True
 
     if isinstance(titiler_endpoint, PlanetaryComputerEndpoint):
         if isinstance(bands, str):
@@ -5549,7 +5720,6 @@ def stac_tile(
                 titiler_endpoint=titiler_endpoint,
             )
             if "detail" not in stats:
-
                 try:
                     percentile_2 = min([stats[s]["percentile_2"] for s in stats])
                     percentile_98 = max([stats[s]["percentile_98"] for s in stats])
@@ -5624,6 +5794,7 @@ def stac_bounds(
         titiler_endpoint = "planetary-computer"
 
     if url is not None:
+        url = get_direct_url(url)
         kwargs["url"] = url
     if collection is not None:
         kwargs["collection"] = collection
@@ -5656,6 +5827,12 @@ def stac_center(url=None, collection=None, item=None, titiler_endpoint=None, **k
     Returns:
         tuple: A tuple representing (longitude, latitude)
     """
+
+    if url is None and collection is None:
+        raise ValueError("Either url or collection must be specified.")
+
+    if isinstance(url, str):
+        url = get_direct_url(url)
     bounds = stac_bounds(url, collection, item, titiler_endpoint, **kwargs)
     center = ((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2)  # (lon, lat)
     return center
@@ -5684,6 +5861,7 @@ def stac_bands(
         titiler_endpoint = "planetary-computer"
 
     if url is not None:
+        url = get_direct_url(url)
         kwargs["url"] = url
     if collection is not None:
         kwargs["collection"] = collection
@@ -5733,6 +5911,7 @@ def stac_stats(
         titiler_endpoint = "planetary-computer"
 
     if url is not None:
+        url = get_direct_url(url)
         kwargs["url"] = url
     if collection is not None:
         kwargs["collection"] = collection
@@ -5784,6 +5963,7 @@ def stac_info(
         titiler_endpoint = "planetary-computer"
 
     if url is not None:
+        url = get_direct_url(url)
         kwargs["url"] = url
     if collection is not None:
         kwargs["collection"] = collection
@@ -5835,6 +6015,7 @@ def stac_info_geojson(
         titiler_endpoint = "planetary-computer"
 
     if url is not None:
+        url = get_direct_url(url)
         kwargs["url"] = url
     if collection is not None:
         kwargs["collection"] = collection
@@ -5879,6 +6060,7 @@ def stac_assets(
         titiler_endpoint = "planetary-computer"
 
     if url is not None:
+        url = get_direct_url(url)
         kwargs["url"] = url
     if collection is not None:
         kwargs["collection"] = collection
@@ -5934,6 +6116,7 @@ def stac_pixel_value(
         titiler_endpoint = "planetary-computer"
 
     if url is not None:
+        url = get_direct_url(url)
         kwargs["url"] = url
     if collection is not None:
         kwargs["collection"] = collection
@@ -5984,22 +6167,15 @@ def local_tile_pixel_value(
     Args:
         lon (float): Longitude of the pixel.
         lat (float): Latitude of the pixel.
-        url (str): HTTP URL to a COG, e.g., 'https://opendata.digitalglobe.com/events/california-fire-2020/pre-event/2018-02-16/pine-gulch-fire20/1030010076004E00.tif'
+        url (str): HTTP URL to a COG, e.g., 'https://github.com/opengeos/data/releases/download/raster/Libya-2023-07-01.tif'
         bidx (str, optional): Dataset band indexes (e.g bidx=1, bidx=1&bidx=2&bidx=3). Defaults to None.
         titiler_endpoint (str, optional): Titiler endpoint, e.g., "https://titiler.xyz", "planetary-computer", "pc". Defaults to None.
         verbose (bool, optional): Print status messages. Defaults to True.
 
     Returns:
-        list: A dictionary of band info.
+        PointData: rio-tiler point data.
     """
-
-    r = tile_client.pixel(lat, lon, units="EPSG:4326", **kwargs)
-    if "bands" in r:
-        return r["bands"]
-    else:
-        if verbose:
-            print("No pixel value found.")
-        return None
+    return tile_client.point(lon, lat, coord_crs="EPSG:4326", **kwargs)
 
 
 def local_tile_vmin_vmax(
@@ -6029,8 +6205,8 @@ def local_tile_vmin_vmax(
     else:
         raise ValueError("source must be a string or TileClient object.")
 
-    stats = tile_client.metadata()["bands"]
-    bandnames = list(stats.keys())
+    bandnames = tile_client.band_names
+    stats = tile_client.reader.statistics()
 
     if isinstance(bands, str):
         bands = [bands]
@@ -6067,8 +6243,7 @@ def local_tile_bands(source):
     else:
         raise ValueError("source must be a string or TileClient object.")
 
-    bandnames = list(tile_client.metadata()["bands"].keys())
-    return bandnames
+    return tile_client.band_names
 
 
 def bbox_to_geojson(bounds):
@@ -6251,6 +6426,9 @@ def image_props(img, date_format="YYYY-MM-dd"):
 
     keys = img.propertyNames().remove("system:footprint").remove("system:bands")
     values = keys.map(lambda p: img.get(p))
+    props = ee.Dictionary.fromLists(keys, values)
+
+    names = keys.getInfo()
 
     bands = img.bandNames()
     scales = bands.map(lambda b: img.select([b]).projection().nominalScale())
@@ -6259,27 +6437,31 @@ def image_props(img, date_format="YYYY-MM-dd"):
         ee.Dictionary.fromLists(bands.getInfo(), scales),
         scales.get(0),
     )
-    image_date = ee.Date(img.get("system:time_start")).format(date_format)
-    time_start = ee.Date(img.get("system:time_start")).format("YYYY-MM-dd HH:mm:ss")
-    # time_end = ee.Date(img.get('system:time_end')).format('YYYY-MM-dd HH:mm:ss')
-    time_end = ee.Algorithms.If(
-        ee.List(img.propertyNames()).contains("system:time_end"),
-        ee.Date(img.get("system:time_end")).format("YYYY-MM-dd HH:mm:ss"),
-        time_start,
-    )
-    asset_size = (
-        ee.Number(img.get("system:asset_size"))
-        .divide(1e6)
-        .format()
-        .cat(ee.String(" MB"))
-    )
 
-    props = ee.Dictionary.fromLists(keys, values)
-    props = props.set("system:time_start", time_start)
-    props = props.set("system:time_end", time_end)
-    props = props.set("system:asset_size", asset_size)
     props = props.set("NOMINAL_SCALE", scale)
-    props = props.set("IMAGE_DATE", image_date)
+
+    if "system:time_start" in names:
+        image_date = ee.Date(img.get("system:time_start")).format(date_format)
+        time_start = ee.Date(img.get("system:time_start")).format("YYYY-MM-dd HH:mm:ss")
+        # time_end = ee.Date(img.get('system:time_end')).format('YYYY-MM-dd HH:mm:ss')
+        time_end = ee.Algorithms.If(
+            ee.List(img.propertyNames()).contains("system:time_end"),
+            ee.Date(img.get("system:time_end")).format("YYYY-MM-dd HH:mm:ss"),
+            time_start,
+        )
+        props = props.set("system:time_start", time_start)
+        props = props.set("system:time_end", time_end)
+        props = props.set("IMAGE_DATE", image_date)
+
+    if "system:asset_size" in names:
+        asset_size = (
+            ee.Number(img.get("system:asset_size"))
+            .divide(1e6)
+            .format()
+            .cat(ee.String(" MB"))
+        )
+
+        props = props.set("system:asset_size", asset_size)
 
     return props
 
@@ -6325,11 +6507,9 @@ def adjust_longitude(in_fc):
         dict: A dictionary containing the converted longitudes
     """
     try:
-
         keys = in_fc.keys()
 
         if "geometry" in keys:
-
             coordinates = in_fc["geometry"]["coordinates"]
 
             if in_fc["geometry"]["type"] == "Point":
@@ -6360,7 +6540,6 @@ def adjust_longitude(in_fc):
                     in_fc["geometry"]["coordinates"][index][0] = longitude
 
         elif "type" in keys:
-
             coordinates = in_fc["coordinates"]
 
             if in_fc["type"] == "Point":
@@ -6400,8 +6579,8 @@ def adjust_longitude(in_fc):
 def zonal_stats(
     in_value_raster,
     in_zone_vector,
-    out_file_path,
-    statistics_type="MEAN",
+    out_file_path=None,
+    stat_type="MEAN",
     scale=None,
     crs=None,
     tile_scale=1.0,
@@ -6417,7 +6596,7 @@ def zonal_stats(
         in_value_raster (object): An ee.Image or ee.ImageCollection that contains the values on which to calculate a statistic.
         in_zone_vector (object): An ee.FeatureCollection that defines the zones.
         out_file_path (str): Output file path that will contain the summary of the values in each zone. The file type can be: csv, shp, json, kml, kmz
-        statistics_type (str, optional): Statistic type to be calculated. Defaults to 'MEAN'. For 'HIST', you can provide three parameters: max_buckets, min_bucket_width, and max_raw. For 'FIXED_HIST', you must provide three parameters: hist_min, hist_max, and hist_steps.
+        stat_type (str, optional): Statistical type to be calculated. Defaults to 'MEAN'. For 'HIST', you can provide three parameters: max_buckets, min_bucket_width, and max_raw. For 'FIXED_HIST', you must provide three parameters: hist_min, hist_max, and hist_steps.
         scale (float, optional): A nominal scale in meters of the projection to work in. Defaults to None.
         crs (str, optional): The projection to work in. If unspecified, the projection of the image's first band is used. If specified in addition to scale, rescaled to the specified scale. Defaults to None.
         tile_scale (float, optional): A scaling factor used to reduce aggregation tile size; using a larger tileScale (e.g. 2 or 4) may enable computations that run out of memory with the default. Defaults to 1.0.
@@ -6437,6 +6616,12 @@ def zonal_stats(
     if not isinstance(in_zone_vector, ee.FeatureCollection):
         print("The input zone data must be an ee.FeatureCollection.")
         return
+
+    if out_file_path is None:
+        out_file_path = os.path.join(os.getcwd(), "zonal_stats.csv")
+
+    if "statistics_type" in kwargs:
+        stat_type = kwargs.pop("statistics_type")
 
     allowed_formats = ["csv", "geojson", "kml", "kmz", "shp"]
     filename = os.path.abspath(out_file_path)
@@ -6470,23 +6655,26 @@ def zonal_stats(
     if "max_raw" in kwargs.keys():
         max_raw = kwargs["max_raw"]
 
-    if (
-        statistics_type.upper() == "FIXED_HIST"
-        and ("hist_min" in kwargs.keys())
-        and ("hist_max" in kwargs.keys())
-        and ("hist_steps" in kwargs.keys())
-    ):
-        hist_min = kwargs["hist_min"]
-        hist_max = kwargs["hist_max"]
-        hist_steps = kwargs["hist_steps"]
-    elif statistics_type.upper() == "FIXED_HIST":
-        print(
-            "To use fixedHistogram, please provide these three parameters: hist_min, hist_max, and hist_steps."
-        )
-        return
+    if isinstance(stat_type, str):
+        if (
+            stat_type.upper() == "FIXED_HIST"
+            and ("hist_min" in kwargs.keys())
+            and ("hist_max" in kwargs.keys())
+            and ("hist_steps" in kwargs.keys())
+        ):
+            hist_min = kwargs["hist_min"]
+            hist_max = kwargs["hist_max"]
+            hist_steps = kwargs["hist_steps"]
+        elif stat_type.upper() == "FIXED_HIST":
+            print(
+                "To use fixedHistogram, please provide these three parameters: hist_min, hist_max, and hist_steps."
+            )
+            return
 
     allowed_statistics = {
+        "COUNT": ee.Reducer.count(),
         "MEAN": ee.Reducer.mean(),
+        "MEAN_UNWEIGHTED": ee.Reducer.mean().unweighted(),
         "MAXIMUM": ee.Reducer.max(),
         "MEDIAN": ee.Reducer.median(),
         "MINIMUM": ee.Reducer.min(),
@@ -6499,15 +6687,27 @@ def zonal_stats(
             maxBuckets=max_buckets, minBucketWidth=min_bucket_width, maxRaw=max_raw
         ),
         "FIXED_HIST": ee.Reducer.fixedHistogram(hist_min, hist_max, hist_steps),
+        "COMBINED_COUNT_MEAN": ee.Reducer.count().combine(
+            ee.Reducer.mean(), sharedInputs=True
+        ),
+        "COMBINED_COUNT_MEAN_UNWEIGHTED": ee.Reducer.count().combine(
+            ee.Reducer.mean().unweighted(), sharedInputs=True
+        ),
     }
 
-    if not (statistics_type.upper() in allowed_statistics.keys()):
-        print(
-            "The statistics type must be one of the following: {}".format(
-                ", ".join(list(allowed_statistics.keys()))
+    if isinstance(stat_type, str):
+        if not (stat_type.upper() in allowed_statistics.keys()):
+            print(
+                "The statistics type must be one of the following: {}".format(
+                    ", ".join(list(allowed_statistics.keys()))
+                )
             )
-        )
-        return
+            return
+        reducer = allowed_statistics[stat_type.upper()]
+    elif isinstance(stat_type, ee.Reducer):
+        reducer = stat_type
+    else:
+        raise ValueError("statistics_type must be either a string or ee.Reducer.")
 
     if scale is None:
         scale = in_value_raster.projection().nominalScale().multiply(10)
@@ -6517,7 +6717,7 @@ def zonal_stats(
             print("Computing statistics ...")
         result = in_value_raster.reduceRegions(
             collection=in_zone_vector,
-            reducer=allowed_statistics[statistics_type],
+            reducer=reducer,
             scale=scale,
             crs=crs,
             tileScale=tile_scale,
@@ -6536,12 +6736,15 @@ zonal_statistics = zonal_stats
 def zonal_stats_by_group(
     in_value_raster,
     in_zone_vector,
-    out_file_path,
-    statistics_type="SUM",
+    out_file_path=None,
+    stat_type="SUM",
     decimal_places=0,
     denominator=1.0,
     scale=None,
     crs=None,
+    crs_transform=None,
+    best_effort=True,
+    max_pixels=1e7,
     tile_scale=1.0,
     return_fc=False,
     verbose=True,
@@ -6555,11 +6758,14 @@ def zonal_stats_by_group(
         in_value_raster (object): An integer Image that contains the values on which to calculate area/percentage.
         in_zone_vector (object): An ee.FeatureCollection that defines the zones.
         out_file_path (str): Output file path that will contain the summary of the values in each zone. The file type can be: csv, shp, json, kml, kmz
-        statistics_type (str, optional): Can be either 'SUM' or 'PERCENTAGE' . Defaults to 'SUM'.
+        stat_type (str, optional): Can be either 'SUM' or 'PERCENTAGE' . Defaults to 'SUM'.
         decimal_places (int, optional): The number of decimal places to use. Defaults to 0.
         denominator (float, optional): To convert area units (e.g., from square meters to square kilometers). Defaults to 1.0.
         scale (float, optional): A nominal scale in meters of the projection to work in. Defaults to None.
         crs (str, optional): The projection to work in. If unspecified, the projection of the image's first band is used. If specified in addition to scale, rescaled to the specified scale. Defaults to None.
+        crs_transform (list, optional): The list of CRS transform values. This is a row-major ordering of the 3x2 transform matrix. This option is mutually exclusive with 'scale', and replaces any transform already set on the projection.
+        best_effort (bool, optional): If the polygon would contain too many pixels at the given scale, compute and use a larger scale which would allow the operation to succeed.
+        max_pixels (int, optional): The maximum number of pixels to reduce. Defaults to 1e7.
         tile_scale (float, optional): A scaling factor used to reduce aggregation tile size; using a larger tileScale (e.g. 2 or 4) may enable computations that run out of memory with the default. Defaults to 1.0.
         verbose (bool, optional): Whether to print descriptive text when the programming is running. Default to True.
         return_fc (bool, optional): Whether to return the results as an ee.FeatureCollection. Defaults to False.
@@ -6574,6 +6780,12 @@ def zonal_stats_by_group(
     if not isinstance(in_value_raster, ee.Image):
         print("The input raster must be an ee.Image.")
         return
+
+    if out_file_path is None:
+        out_file_path = os.path.join(os.getcwd(), "zonal_stats_by_group.csv")
+
+    if "statistics_type" in kwargs:
+        stat_type = kwargs.pop("statistics_type")
 
     band_count = in_value_raster.bandNames().size().getInfo()
 
@@ -6613,7 +6825,7 @@ def zonal_stats_by_group(
         os.makedirs(out_dir)
 
     allowed_statistics = ["SUM", "PERCENTAGE"]
-    if not (statistics_type.upper() in allowed_statistics):
+    if not (stat_type.upper() in allowed_statistics):
         print(
             "The statistics type can only be one of {}".format(
                 ", ".join(allowed_statistics)
@@ -6625,7 +6837,6 @@ def zonal_stats_by_group(
         scale = in_value_raster.projection().nominalScale().multiply(10)
 
     try:
-
         if verbose:
             print("Computing ... ")
         geometry = in_zone_vector.geometry()
@@ -6633,8 +6844,12 @@ def zonal_stats_by_group(
         hist = in_value_raster.reduceRegion(
             ee.Reducer.frequencyHistogram(),
             geometry=geometry,
-            bestEffort=True,
             scale=scale,
+            crs=crs,
+            crsTransform=crs_transform,
+            bestEffort=best_effort,
+            maxPixels=max_pixels,
+            tileScale=tile_scale,
         )
         class_values = (
             ee.Dictionary(hist.get(band_name))
@@ -6696,7 +6911,7 @@ def zonal_stats_by_group(
                     keys.contains(x), values.get(keys.indexOf(x)), 0
                 )
                 cls_value = ee.Algorithms.If(
-                    ee.String(statistics_type).compareTo(ee.String("SUM")),
+                    ee.String(stat_type).compareTo(ee.String("SUM")),
                     ee.Number(cls_value).divide(ee.Number(total_area)),
                     cls_value,
                 )
@@ -7131,6 +7346,76 @@ def image_value_list(img, region=None, scale=None, return_hist=False, **kwargs):
         return hist.keys()
 
 
+def image_histogram(
+    img,
+    region=None,
+    scale=None,
+    x_label=None,
+    y_label=None,
+    title=None,
+    width=None,
+    height=500,
+    plot_args={},
+    layout_args={},
+    return_df=False,
+    **kwargs,
+):
+    """Create a histogram of an image.
+
+    Args:
+        img (ee.Image): The image to calculate the histogram.
+        region (ee.Geometry | ee.FeatureCollection, optional): The region over which to reduce data. Defaults to the footprint of the image's first band.
+        scale (float, optional): A nominal scale in meters of the projection to work in. Defaults to None.
+        x_label (str, optional): Label for the x axis. Defaults to None.
+        y_label (str, optional): Label for the y axis. Defaults to None.
+        title (str, optional): Title for the plot. Defaults to None.
+        width (int, optional): Width of the plot in pixels. Defaults to None.
+        height (int, optional): Height of the plot in pixels. Defaults to 500.
+        layout_args (dict, optional): Layout arguments for the plot to be passed to fig.update_layout(),
+        return_df (bool, optional): If True, return a pandas dataframe. Defaults to False.
+
+    Returns:
+        pandas DataFrame | plotly figure object: A dataframe or plotly figure object.
+    """
+    import pandas as pd
+    import plotly.express as px
+
+    hist = image_value_list(img, region, scale, return_hist=True, **kwargs).getInfo()
+    keys = sorted(hist, key=int)
+    values = [hist.get(key) for key in keys]
+
+    data = pd.DataFrame({"key": keys, "value": values})
+
+    if return_df:
+        return data
+    else:
+        labels = {}
+
+        if x_label is not None:
+            labels["key"] = x_label
+        if y_label is not None:
+            labels["value"] = y_label
+
+        try:
+            fig = px.bar(
+                data,
+                x="key",
+                y="value",
+                labels=labels,
+                title=title,
+                width=width,
+                height=height,
+                **plot_args,
+            )
+
+            if isinstance(layout_args, dict):
+                fig.update_layout(**layout_args)
+
+            return fig
+        except Exception as e:
+            raise Exception(e)
+
+
 def image_stats_by_zone(
     image,
     zones,
@@ -7240,7 +7525,7 @@ def latitude_grid(step=1.0, west=-180, east=180, south=-85, north=85):
         north (int, optional): The north boundary in degrees. Defaults to 85.
 
     Returns:
-        ee.FeatureColleciton: A feature collection of latitude grids.
+        ee.FeatureCollection: A feature collection of latitude grids.
     """
     values = ee.List.sequence(south, north - step, step)
 
@@ -7271,7 +7556,7 @@ def longitude_grid(step=1.0, west=-180, east=180, south=-85, north=85):
         north (int, optional): The north boundary in degrees. Defaults to 85.
 
     Returns:
-        ee.FeatureColleciton: A feature collection of longitude grids.
+        ee.FeatureCollection: A feature collection of longitude grids.
     """
 
     values = ee.List.sequence(west, east - step, step)
@@ -7293,7 +7578,7 @@ def longitude_grid(step=1.0, west=-180, east=180, south=-85, north=85):
 
 
 def latlon_grid(lat_step=1.0, lon_step=1.0, west=-180, east=180, south=-85, north=85):
-    """Create a retangular grid of latitude and longitude.
+    """Create a rectangular grid of latitude and longitude.
 
     Args:
         lat_step (float, optional): The step size in degrees. Defaults to 1.0.
@@ -7357,7 +7642,6 @@ def fishnet(
         ee.FeatureCollection: The fishnet as an ee.FeatureCollection.
     """
     if isinstance(data, str):
-
         data = vector_to_ee(data, **kwargs)
 
     if isinstance(data, ee.FeatureCollection) or isinstance(data, ee.Feature):
@@ -7439,6 +7723,7 @@ def extract_values_to_points(
         "MAXIMUM": ee.Reducer.max(),
         "MEDIAN": ee.Reducer.median(),
         "MINIMUM": ee.Reducer.min(),
+        "MODE": ee.Reducer.mode(),
         "STD": ee.Reducer.stdDev(),
         "MIN_MAX": ee.Reducer.minMax(),
         "SUM": ee.Reducer.sum(),
@@ -7516,7 +7801,7 @@ def rename_bands(img, in_band_names, out_band_names):
 
     Args:
         img (object): The image to be renamed.
-        in_band_names (list): The list of of input band names.
+        in_band_names (list): The list of input band names.
         out_band_names (list): The list of output band names.
 
     Returns:
@@ -7930,7 +8215,6 @@ def nwi_add_color(fc):
 
 
 def nwi_rename(names):
-
     name_dict = ee.Dictionary(
         {
             "Freshwater Emergent Wetland": "Emergent",
@@ -8132,35 +8416,79 @@ def png_to_gif(in_dir, out_gif, fps=10, loop=0):
     )
 
 
-def geometry_type(ee_object):
-    """Get geometry type of an Earth Engine object.
+def jpg_to_gif(in_dir, out_gif, fps=10, loop=0):
+    """Convert a list of jpg images to gif.
 
     Args:
-        ee_object (object): An Earth Engine object.
+        in_dir (str): The input directory containing jpg images.
+        out_gif (str): The output file path to the gif.
+        fps (int, optional): Frames per second. Defaults to 10.
+        loop (bool, optional): controls how many times the animation repeats. 1 means that the animation will play once and then stop (displaying the last frame). A value of 0 means that the animation will repeat forever. Defaults to 0.
 
-    Returns:
-        str: Returns geometry type. One of Point, MultiPoint, LineString, LinearRing, MultiLineString, BBox, Rectangle, Polygon, MultiPolygon.
+    Raises:
+        FileNotFoundError: No jpg images could be found.
     """
-    if isinstance(ee_object, ee.Geometry):
-        return ee_object.type().getInfo()
-    elif isinstance(ee_object, ee.Feature):
-        return ee_object.geometry().type().getInfo()
-    elif isinstance(ee_object, ee.FeatureCollection):
-        return ee.Feature(ee_object.first()).geometry().type().getInfo()
-    else:
-        raise TypeError(
-            "The ee_object must be one of ee.Geometry, ee.Feature, ee.FeatureCollection."
-        )
+    import glob
+
+    from PIL import Image
+
+    if not out_gif.endswith(".gif"):
+        raise ValueError("The out_gif must be a gif file.")
+
+    out_gif = os.path.abspath(out_gif)
+
+    out_dir = os.path.dirname(out_gif)
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    # Create the frames
+    frames = []
+    imgs = list(glob.glob(os.path.join(in_dir, "*.jpg")))
+    imgs.sort()
+
+    if len(imgs) == 0:
+        raise FileNotFoundError(f"No jpg could be found in {in_dir}.")
+
+    for i in imgs:
+        new_frame = Image.open(i)
+        frames.append(new_frame)
+
+    # Save into a GIF file that loops forever
+    frames[0].save(
+        out_gif,
+        format="GIF",
+        append_images=frames[1:],
+        save_all=True,
+        duration=1000 / fps,
+        loop=loop,
+    )
 
 
-def vector_styling(ee_object, column, palette, **kwargs):
+def vector_styling(
+    ee_object,
+    column,
+    palette,
+    color="000000",
+    colorOpacity=1.0,
+    pointSize=3,
+    pointShape="circle",
+    width=1,
+    lineType="solid",
+    fillColorOpacity=0.66,
+):
     """Add a new property to each feature containing a stylying dictionary.
 
     Args:
         ee_object (object): An ee.FeatureCollection.
         column (str): The column name to use for styling.
         palette (list | dict): The palette (e.g., list of colors or a dict containing label and color pairs) to use for styling.
-
+        color (str, optional): A default color (CSS 3.0 color value e.g. 'FF0000' or 'red') to use for drawing the features. Defaults to "black".
+        colorOpacity (float, optional): Opacity between 0-1 of the features. Defaults to 1
+        pointSize (int, optional): The default size in pixels of the point markers. Defaults to 3.
+        pointShape (str, optional): The default shape of the marker to draw at each point location. One of: circle, square, diamond, cross, plus, pentagram, hexagram, triangle, triangle_up, triangle_down, triangle_left, triangle_right, pentagon, hexagon, star5, star6. This argument also supports the following Matlab marker abbreviations: o, s, d, x, +, p, h, ^, v, <, >. Defaults to "circle".
+        width (int, optional): The default line width for lines and outlines for polygons and point shapes. Defaults to 1.
+        lineType (str, optional): The default line style for lines and outlines of polygons and point shapes. Defaults to 'solid'. One of: solid, dotted, dashed. Defaults to "solid".
+        fillColorOpacity (float, optional): Opacity between 0-1 of the fill. Defaults to 0.66. Color of the fill is based on the column name or index in the palette.
     Raises:
         ValueError: The provided column name is invalid.
         TypeError: The provided palette is invalid.
@@ -8172,7 +8500,6 @@ def vector_styling(ee_object, column, palette, **kwargs):
     from box import Box
 
     if isinstance(ee_object, ee.FeatureCollection):
-
         prop_names = ee.Feature(ee_object.first()).propertyNames().getInfo()
         arr = ee_object.aggregate_array(column).distinct().sort()
 
@@ -8201,32 +8528,9 @@ def vector_styling(ee_object, column, palette, **kwargs):
         if not isinstance(palette, list):
             raise TypeError("The palette must be a list.")
 
-        color = "000000"
-        color_opacity = 1
-        point_size = 3
-        point_shape = "circle"
-        line_width = 1
-        line_type = "solid"
-        fill_color_opacity = 0.66
-
-        if "color" in kwargs.keys():
-            color = kwargs["color"]
-        if "colorOpacity" in kwargs.keys():
-            color_opacity = kwargs["colorOpacity"]
-        if "pointSize" in kwargs.keys():
-            point_size = kwargs["pointSize"]
-        if "pointShape" in kwargs.keys():
-            point_shape = kwargs["pointShape"]
-        if "width" in kwargs.keys():
-            line_width = kwargs["width"]
-        if "lineType" in kwargs.keys():
-            line_type = kwargs["lineType"]
-        if "fillColorOpacity" in kwargs.keys():
-            fill_color_opacity = kwargs["fillColorOpacity"]
-
         colors = ee.List(
             [
-                color.strip() + str(hex(int(fill_color_opacity * 255)))[2:].zfill(2)
+                color.strip() + str(hex(int(fillColorOpacity * 255)))[2:].zfill(2)
                 for color in palette
             ]
         )
@@ -8236,12 +8540,11 @@ def vector_styling(ee_object, column, palette, **kwargs):
             lambda f: f.set(
                 {
                     "style": {
-                        "color": color
-                        + str(hex(int(color_opacity * 255)))[2:].zfill(2),
-                        "pointSize": point_size,
-                        "pointShape": point_shape,
-                        "width": line_width,
-                        "lineType": line_type,
+                        "color": color + str(hex(int(colorOpacity * 255)))[2:].zfill(2),
+                        "pointSize": pointSize,
+                        "pointShape": pointShape,
+                        "width": width,
+                        "lineType": lineType,
                         "fillColor": colors.get(
                             ee.Number(
                                 ee.Number(f.get("styleIndex")).divide(step)
@@ -8259,7 +8562,6 @@ def vector_styling(ee_object, column, palette, **kwargs):
 
 
 def is_GCS(in_shp):
-
     import pycrs
 
     if not os.path.exists(in_shp):
@@ -8276,7 +8578,6 @@ def is_GCS(in_shp):
         )
         return True
     else:
-
         with open(in_prj) as f:
             esri_wkt = f.read()
         epsg4326 = pycrs.parse.from_epsg_code(4326).to_proj4()
@@ -8320,10 +8621,11 @@ def kml_to_shp(in_kml, out_shp, **kwargs):
     check_package(name="geopandas", URL="https://geopandas.org")
 
     import geopandas as gpd
+    import fiona
 
     # import fiona
     # print(fiona.supported_drivers)
-    gpd.io.file.fiona.drvsupport.supported_drivers["KML"] = "rw"
+    fiona.drvsupport.supported_drivers["KML"] = "rw"
     df = gpd.read_file(in_kml, driver="KML", **kwargs)
     df.to_file(out_shp, **kwargs)
 
@@ -8359,10 +8661,10 @@ def kml_to_geojson(in_kml, out_geojson=None, **kwargs):
     check_package(name="geopandas", URL="https://geopandas.org")
 
     import geopandas as gpd
+    import fiona
 
-    # import fiona
     # print(fiona.supported_drivers)
-    gpd.io.file.fiona.drvsupport.supported_drivers["KML"] = "rw"
+    fiona.drvsupport.supported_drivers["KML"] = "rw"
     gdf = gpd.read_file(in_kml, driver="KML", **kwargs)
 
     if out_geojson is not None:
@@ -8372,7 +8674,7 @@ def kml_to_geojson(in_kml, out_geojson=None, **kwargs):
 
 
 def kml_to_ee(in_kml, **kwargs):
-    """Converts a KML to ee.FeatureColleciton.
+    """Converts a KML to ee.FeatureCollection.
 
     Args:
         in_kml (str): The file path to the input KML.
@@ -8401,7 +8703,7 @@ def kml_to_ee(in_kml, **kwargs):
 
 
 def kmz_to_ee(in_kmz, **kwargs):
-    """Converts a KMZ to ee.FeatureColleciton.
+    """Converts a KMZ to ee.FeatureCollection.
 
     Args:
         in_kmz (str): The file path to the input KMZ.
@@ -8437,21 +8739,29 @@ def csv_to_df(in_csv, **kwargs):
     """
     import pandas as pd
 
+    in_csv = github_raw_url(in_csv)
+
     try:
         return pd.read_csv(in_csv, **kwargs)
     except Exception as e:
         raise Exception(e)
 
 
-csv_to_pandas = csv_to_df
-
-
-def ee_to_df(ee_object, col_names=None, **kwargs):
+def ee_to_df(
+    ee_object,
+    columns=None,
+    remove_geom=True,
+    sort_columns=False,
+    **kwargs,
+):
     """Converts an ee.FeatureCollection to pandas dataframe.
 
     Args:
         ee_object (ee.FeatureCollection): ee.FeatureCollection.
-        col_names (list): List of column names. Defaults to None.
+        columns (list): List of column names. Defaults to None.
+        remove_geom (bool): Whether to remove the geometry column. Defaults to True.
+        sort_columns (bool): Whether to sort the column names. Defaults to False.
+        kwargs: Additional arguments passed to ee.data.computeFeature.
 
     Raises:
         TypeError: ee_object must be an ee.FeatureCollection
@@ -8459,8 +8769,6 @@ def ee_to_df(ee_object, col_names=None, **kwargs):
     Returns:
         pd.DataFrame: pandas DataFrame
     """
-    import pandas as pd
-
     if isinstance(ee_object, ee.Feature):
         ee_object = ee.FeatureCollection([ee_object])
 
@@ -8468,24 +8776,30 @@ def ee_to_df(ee_object, col_names=None, **kwargs):
         raise TypeError("ee_object must be an ee.FeatureCollection")
 
     try:
-        data = ee_object.map(lambda f: ee.Feature(None, f.toDictionary()))
-        data = [x["properties"] for x in data.getInfo()["features"]]
-        df = pd.DataFrame(data)
+        if remove_geom:
+            data = ee_object.map(
+                lambda f: ee.Feature(None, f.toDictionary(f.propertyNames().sort()))
+            )
+        else:
+            data = ee_object
 
-        if col_names is None:
-            col_names = ee_object.first().propertyNames().getInfo()
-            col_names.remove("system:index")
-        elif not isinstance(col_names, list):
-            raise TypeError("col_names must be a list")
+        kwargs["expression"] = data
+        kwargs["fileFormat"] = "PANDAS_DATAFRAME"
 
-        df = df[col_names]
+        df = ee.data.computeFeatures(kwargs)
+
+        if isinstance(columns, list):
+            df = df[columns]
+
+        if remove_geom and ("geo" in df.columns):
+            df = df.drop(columns=["geo"], axis=1)
+
+        if sort_columns:
+            df = df.reindex(sorted(df.columns), axis=1)
 
         return df
     except Exception as e:
         raise Exception(e)
-
-
-ee_to_pandas = ee_to_df
 
 
 def shp_to_gdf(in_shp, **kwargs):
@@ -8520,35 +8834,49 @@ def shp_to_gdf(in_shp, **kwargs):
 shp_to_geopandas = shp_to_gdf
 
 
-def ee_to_gdf(ee_object, selectors=None, verbose=False):
-    """Converts an ee.FeatureCollection to Geopandas dataframe.
+def ee_to_gdf(
+    ee_object,
+    columns=None,
+    sort_columns=False,
+    **kwargs,
+):
+    """Converts an ee.FeatureCollection to GeoPandas GeoDataFrame.
 
     Args:
         ee_object (ee.FeatureCollection): ee.FeatureCollection.
-        selectors (list, optional): A list of attributes to export. Defaults to None.
-        verbose (bool, optional): Whether to print out descriptive text. Defaults to False.
+        columns (list): List of column names. Defaults to None.
+        sort_columns (bool): Whether to sort the column names. Defaults to False.
+        kwargs: Additional arguments passed to ee.data.computeFeature.
 
     Raises:
-        TypeError: ee_object must be an ee.FeatureCollection.
+        TypeError: ee_object must be an ee.FeatureCollection
 
     Returns:
-        gpd.GeoDataFrame: geopandas.GeoDataFrame
+        gpd.GeoDataFrame: GeoPandas GeoDataFrame
     """
-
-    check_package(name="geopandas", URL="https://geopandas.org")
-
-    import geopandas as gpd
+    if isinstance(ee_object, ee.Feature):
+        ee_object = ee.FeatureCollection([ee_object])
 
     if not isinstance(ee_object, ee.FeatureCollection):
         raise TypeError("ee_object must be an ee.FeatureCollection")
 
-    collection = ee_to_geojson(ee_object)
-    gdf = gpd.GeoDataFrame.from_features(collection["features"])
+    try:
+        kwargs["expression"] = ee_object
+        kwargs["fileFormat"] = "GEOPANDAS_GEODATAFRAME"
 
-    return gdf
+        crs = ee_object.first().geometry().projection().crs().getInfo()
+        gdf = ee.data.computeFeatures(kwargs)
 
+        if isinstance(columns, list):
+            gdf = gdf[columns]
 
-ee_to_geopandas = ee_to_gdf
+        if sort_columns:
+            gdf = gdf.reindex(sorted(gdf.columns), axis=1)
+
+        gdf.crs = crs
+        return gdf
+    except Exception as e:
+        raise Exception(e)
 
 
 def delete_shp(in_shp, verbose=False):
@@ -8596,7 +8924,7 @@ def df_to_ee(df, latitude="latitude", longitude="longitude", **kwargs):
     if not isinstance(df, pd.DataFrame):
         raise TypeError("The input data type must be pandas.DataFrame.")
 
-    geojson = pandas_to_geojson(df, latitude=latitude, longitude=longitude)
+    geojson = df_to_geojson(df, latitude=latitude, longitude=longitude)
     fc = geojson_to_ee(geojson)
 
     return fc
@@ -8675,12 +9003,15 @@ def vector_to_geojson(
     warnings.filterwarnings("ignore")
     check_package(name="geopandas", URL="https://geopandas.org")
     import geopandas as gpd
+    import fiona
 
     if not filename.startswith("http"):
         filename = os.path.abspath(filename)
+    else:
+        filename = download_file(github_raw_url(filename))
     ext = os.path.splitext(filename)[1].lower()
     if ext == ".kml":
-        gpd.io.file.fiona.drvsupport.supported_drivers["KML"] = "rw"
+        fiona.drvsupport.supported_drivers["KML"] = "rw"
         df = gpd.read_file(
             filename, bbox=bbox, mask=mask, rows=rows, driver="KML", **kwargs
         )
@@ -8689,7 +9020,6 @@ def vector_to_geojson(
     gdf = df.to_crs(epsg=epsg)
 
     if out_geojson is not None:
-
         if not out_geojson.lower().endswith(".geojson"):
             raise ValueError("The output file must have a geojson file extension.")
 
@@ -8787,7 +9117,6 @@ def list_vars(var_type=None):
     result = []
 
     for var in globals():
-
         reserved_vars = [
             "In",
             "Out",
@@ -8848,7 +9177,6 @@ def extract_transect(
         ee.FeatureCollection: The FeatureCollection containing the transect with distance and reducer values.
     """
     try:
-
         geom_type = line.type().getInfo()
         if geom_type != "LineString":
             raise TypeError("The geometry type must be LineString.")
@@ -9019,36 +9347,6 @@ def osm_to_geojson(query, which_result=None, by_osmid=False, buffer_dist=None):
     return gdf.__geo_interface__
 
 
-def get_api_key(token_name, m=None):
-    """Retrieves an API key based on a system environmen variable.
-
-    Args:
-        token_name (str): The token name.
-        m (ipyleaflet.Map | folium.Map, optional): A Map instance. Defaults to None.
-
-    Returns:
-        str: The API key.
-    """
-    api_key = os.environ.get(token_name)
-    if m is not None and token_name in m.api_keys:
-        api_key = m.api_keys[token_name]
-
-    return api_key
-
-
-def set_api_key(token_name, api_key, m=None):
-    """Sets an API key as an environment variable.
-
-    Args:
-        token_name (str): The token name.
-        api_key (str): The API key.
-        m (ipyleaflet.Map | folium.Map, optional): A Map instance.. Defaults to None.
-    """
-    os.environ[token_name] = api_key
-    if m is not None:
-        m.api_keys[token_name] = api_key
-
-
 def planet_monthly_tropical(api_key=None, token_name="PLANET_API_KEY"):
     """Generates Planet monthly imagery URLs based on an API key. See https://assets.planet.com/docs/NICFI_UserGuidesFAQ.pdf
 
@@ -9078,7 +9376,6 @@ def planet_monthly_tropical(api_key=None, token_name="PLANET_API_KEY"):
     subfix = "_mosaic/gmap/{z}/{x}/{y}.png?api_key="
 
     for year in range(2020, year_now + 1):
-
         for month in range(1, 13):
             m_str = str(year) + "-" + str(month).zfill(2)
 
@@ -9297,7 +9594,6 @@ def planet_monthly(api_key=None, token_name="PLANET_API_KEY"):
     subfix = "_mosaic/gmap/{z}/{x}/{y}.png?api_key="
 
     for year in range(2016, year_now + 1):
-
         for month in range(1, 13):
             m_str = str(year) + "_" + str(month).zfill(2)
 
@@ -9340,7 +9636,6 @@ def planet_quarterly(api_key=None, token_name="PLANET_API_KEY"):
     subfix = "_mosaic/gmap/{z}/{x}/{y}.png?api_key="
 
     for year in range(2016, year_now + 1):
-
         for quarter in range(1, 5):
             m_str = str(year) + "q" + str(quarter)
 
@@ -9709,13 +10004,10 @@ def get_census_dict(reset=False):
     Returns:
         dict: A dictionary of Census data.
     """
-    import pkg_resources
-
-    pkg_dir = os.path.dirname(pkg_resources.resource_filename("geemap", "geemap.py"))
+    pkg_dir = str(importlib.resources.files("geemap").joinpath("geemap.py").parent)
     census_data = os.path.join(pkg_dir, "data/census_data.json")
 
     if reset:
-
         try:
             from owslib.wms import WebMapService
         except ImportError:
@@ -9751,13 +10043,13 @@ def get_census_dict(reset=False):
         print("Retrieving data. Please wait ...")
         for name in names:
             if "Decennial" not in name:
-                links[
-                    name
-                ] = f"https://tigerweb.geo.census.gov/arcgis/services/TIGERweb/tigerWMS_{name.replace(' ', '')}/MapServer/WMSServer"
+                links[name] = (
+                    f"https://tigerweb.geo.census.gov/arcgis/services/TIGERweb/tigerWMS_{name.replace(' ', '')}/MapServer/WMSServer"
+                )
             else:
-                links[
-                    name
-                ] = f"https://tigerweb.geo.census.gov/arcgis/services/Census2020/tigerWMS_{name.replace('Decennial', '').replace(' ', '')}/MapServer/WMSServer"
+                links[name] = (
+                    f"https://tigerweb.geo.census.gov/arcgis/services/Census2020/tigerWMS_{name.replace('Decennial', '').replace(' ', '')}/MapServer/WMSServer"
+                )
 
             wms = WebMapService(links[name], timeout=300)
             layers = list(wms.contents)
@@ -9773,7 +10065,6 @@ def get_census_dict(reset=False):
             json.dump(census_dict, f, indent=4)
 
     else:
-
         with open(census_data, "r") as f:
             census_dict = json.load(f)
 
@@ -9916,7 +10207,6 @@ def create_download_button(
         import pandas as pd
 
         if isinstance(data, str):
-
             if file_name is None:
                 file_name = data.split("/")[-1]
 
@@ -10006,25 +10296,16 @@ def gdf_to_geojson(gdf, out_geojson=None, epsg=None):
         raise Exception(e)
 
 
-def temp_file_path(extension):
-    """Returns a temporary file path.
-
-    Args:
-        extension (str): The file extension.
+def get_temp_dir():
+    """Returns the temporary directory.
 
     Returns:
-        str: The temporary file path.
+        str: The temporary directory.
     """
 
     import tempfile
-    import uuid
 
-    if not extension.startswith("."):
-        extension = "." + extension
-    file_id = str(uuid.uuid4())
-    file_path = os.path.join(tempfile.gettempdir(), f"{file_id}{extension}")
-
-    return file_path
+    return tempfile.gettempdir()
 
 
 def create_contours(
@@ -10054,7 +10335,6 @@ def create_contours(
         if isinstance(region, ee.FeatureCollection) or isinstance(region, ee.Geometry):
             pass
         else:
-
             raise TypeError(
                 "The region must be an ee.Geometry or ee.FeatureCollection."
             )
@@ -10094,9 +10374,8 @@ def get_local_tile_layer(
     source,
     port="default",
     debug=False,
-    projection="EPSG:3857",
-    band=None,
-    palette=None,
+    indexes=None,
+    colormap=None,
     vmin=None,
     vmax=None,
     nodata=None,
@@ -10104,49 +10383,90 @@ def get_local_tile_layer(
     tile_format="ipyleaflet",
     layer_name="Local COG",
     return_client=False,
+    quiet=False,
     **kwargs,
 ):
     """Generate an ipyleaflet/folium TileLayer from a local raster dataset or remote Cloud Optimized GeoTIFF (COG).
-        If you are using this function in JupyterHub on a remote server (e.g., Binder, Microsoft Planetary Computer),
-        try adding to following two lines to the beginning of the notebook if the raster does not render properly.
+        If you are using this function in JupyterHub on a remote server and the raster does not render properly, try
+        running the following two lines before calling this function:
 
         import os
-        os.environ['LOCALTILESERVER_CLIENT_PREFIX'] = f'{os.environ['JUPYTERHUB_SERVICE_PREFIX'].lstrip('/')}/proxy/{{port}}'
+        os.environ['LOCALTILESERVER_CLIENT_PREFIX'] = 'proxy/{port}'
 
     Args:
         source (str): The path to the GeoTIFF file or the URL of the Cloud Optimized GeoTIFF.
         port (str, optional): The port to use for the server. Defaults to "default".
         debug (bool, optional): If True, the server will be started in debug mode. Defaults to False.
-        projection (str, optional): The projection of the GeoTIFF. Defaults to "EPSG:3857".
-        band (int, optional): The band to use. Band indexing starts at 1. Defaults to None.
-        palette (str, optional): The name of the color palette from `palettable` to use when plotting a single band. See https://jiffyclub.github.io/palettable. Default is greyscale
-        vmin (float, optional): The minimum value to use when colormapping the palette when plotting a single band. Defaults to None.
-        vmax (float, optional): The maximum value to use when colormapping the palette when plotting a single band. Defaults to None.
+        indexes (int, optional): The band(s) to use. Band indexing starts at 1. Defaults to None.
+        colormap (str, optional): The name of the colormap from `matplotlib` to use when plotting a single band. See https://matplotlib.org/stable/gallery/color/colormap_reference.html. Default is greyscale.
+        vmin (float, optional): The minimum value to use when colormapping the colormap when plotting a single band. Defaults to None.
+        vmax (float, optional): The maximum value to use when colormapping the colormap when plotting a single band. Defaults to None.
         nodata (float, optional): The value from the band to use to interpret as not valid data. Defaults to None.
         attribution (str, optional): Attribution for the source raster. This defaults to a message about it being a local file.. Defaults to None.
         tile_format (str, optional): The tile layer format. Can be either ipyleaflet or folium. Defaults to "ipyleaflet".
         layer_name (str, optional): The layer name to use. Defaults to None.
         return_client (bool, optional): If True, the tile client will be returned. Defaults to False.
+        quiet (bool, optional): If True, the error messages will be suppressed. Defaults to False.
 
     Returns:
         ipyleaflet.TileLayer | folium.TileLayer: An ipyleaflet.TileLayer or folium.TileLayer.
     """
-
-    import warnings
-
-    warnings.filterwarnings("ignore")
-
-    output = widgets.Output()
+    import rasterio
 
     check_package(
         "localtileserver", URL="https://github.com/banesullivan/localtileserver"
     )
 
+    # Handle legacy localtileserver kwargs
+    if "cmap" in kwargs:
+        warnings.warn(
+            "`cmap` is a deprecated keyword argument for get_local_tile_layer. Please use `colormap`."
+        )
+    if "palette" in kwargs:
+        warnings.warn(
+            "`palette` is a deprecated keyword argument for get_local_tile_layer. Please use `colormap`."
+        )
+    if "band" in kwargs or "bands" in kwargs:
+        warnings.warn(
+            "`band` and `bands` are deprecated keyword arguments for get_local_tile_layer. Please use `indexes`."
+        )
+    if "projection" in kwargs:
+        warnings.warn(
+            "`projection` is a deprecated keyword argument for get_local_tile_layer and will be ignored."
+        )
+    if "style" in kwargs:
+        warnings.warn(
+            "`style` is a deprecated keyword argument for get_local_tile_layer and will be ignored."
+        )
+
+    if "max_zoom" not in kwargs:
+        kwargs["max_zoom"] = 30
+    if "max_native_zoom" not in kwargs:
+        kwargs["max_native_zoom"] = 30
+    if "cmap" in kwargs:
+        colormap = kwargs.pop("cmap")
+    if "palette" in kwargs:
+        colormap = kwargs.pop("palette")
+    if "band" in kwargs:
+        indexes = kwargs.pop("band")
+    if "bands" in kwargs:
+        indexes = kwargs.pop("bands")
+
     # Make it compatible with binder and JupyterHub
     if os.environ.get("JUPYTERHUB_SERVICE_PREFIX") is not None:
-        os.environ[
-            "LOCALTILESERVER_CLIENT_PREFIX"
-        ] = f"{os.environ['JUPYTERHUB_SERVICE_PREFIX'].lstrip('/')}/proxy/{{port}}"
+        os.environ["LOCALTILESERVER_CLIENT_PREFIX"] = (
+            f"{os.environ['JUPYTERHUB_SERVICE_PREFIX'].lstrip('/')}/proxy/{{port}}"
+        )
+
+    if is_studio_lab():
+        os.environ["LOCALTILESERVER_CLIENT_PREFIX"] = (
+            f"studiolab/default/jupyter/proxy/{{port}}"
+        )
+    elif is_on_aws():
+        os.environ["LOCALTILESERVER_CLIENT_PREFIX"] = "proxy/{port}"
+    elif "prefix" in kwargs:
+        os.environ["LOCALTILESERVER_CLIENT_PREFIX"] = kwargs["prefix"]
+        kwargs.pop("prefix")
 
     from localtileserver import (
         get_leaflet_tile_layer,
@@ -10154,20 +10474,26 @@ def get_local_tile_layer(
         TileClient,
     )
 
+    # if "show_loading" not in kwargs:
+    #     kwargs["show_loading"] = False
+
     if isinstance(source, str):
         if not source.startswith("http"):
             if source.startswith("~"):
                 source = os.path.expanduser(source)
-            else:
-                source = os.path.abspath(source)
-            if not os.path.exists(source):
-                raise ValueError("The source path does not exist.")
+            # else:
+            #     source = os.path.abspath(source)
+            # if not os.path.exists(source):
+            #     raise ValueError("The source path does not exist.")
+        else:
+            source = github_raw_url(source)
+    elif isinstance(source, TileClient) or isinstance(
+        source, rasterio.io.DatasetReader
+    ):
+        pass
+
     else:
         raise ValueError("The source must either be a string or TileClient")
-
-    if isinstance(palette, str):
-
-        palette = get_palette_colors(palette, hashtag=True)
 
     if tile_format not in ["ipyleaflet", "folium"]:
         raise ValueError("The tile format must be either ipyleaflet or folium.")
@@ -10178,17 +10504,51 @@ def get_local_tile_layer(
         else:
             layer_name = "LocalTile_" + random_string(3)
 
-    with output:
+    if isinstance(source, str) or isinstance(source, rasterio.io.DatasetReader):
         tile_client = TileClient(source, port=port, debug=debug)
+    else:
+        tile_client = source
 
+    if quiet:
+        output = widgets.Output()
+        with output:
+            if tile_format == "ipyleaflet":
+                tile_layer = get_leaflet_tile_layer(
+                    tile_client,
+                    port=port,
+                    debug=debug,
+                    indexes=indexes,
+                    colormap=colormap,
+                    vmin=vmin,
+                    vmax=vmax,
+                    nodata=nodata,
+                    attribution=attribution,
+                    name=layer_name,
+                    **kwargs,
+                )
+            else:
+                tile_layer = get_folium_tile_layer(
+                    tile_client,
+                    port=port,
+                    debug=debug,
+                    indexes=indexes,
+                    colormap=colormap,
+                    vmin=vmin,
+                    vmax=vmax,
+                    nodata=nodata,
+                    attr=attribution,
+                    overlay=True,
+                    name=layer_name,
+                    **kwargs,
+                )
+    else:
         if tile_format == "ipyleaflet":
             tile_layer = get_leaflet_tile_layer(
                 tile_client,
                 port=port,
                 debug=debug,
-                projection=projection,
-                band=band,
-                palette=palette,
+                indexes=indexes,
+                colormap=colormap,
                 vmin=vmin,
                 vmax=vmax,
                 nodata=nodata,
@@ -10201,9 +10561,8 @@ def get_local_tile_layer(
                 tile_client,
                 port=port,
                 debug=debug,
-                projection=projection,
-                band=band,
-                palette=palette,
+                indexes=indexes,
+                colormap=colormap,
                 vmin=vmin,
                 vmax=vmax,
                 nodata=nodata,
@@ -10217,6 +10576,19 @@ def get_local_tile_layer(
         return tile_layer, tile_client
     else:
         return tile_layer
+
+    # center = tile_client.center()
+    # bounds = tile_client.bounds()  # [ymin, ymax, xmin, xmax]
+    # bounds = (bounds[2], bounds[0], bounds[3], bounds[1])  # [minx, miny, maxx, maxy]
+
+    # if get_center and get_bounds:
+    #     return tile_layer, center, bounds
+    # elif get_center:
+    #     return tile_layer, center
+    # elif get_bounds:
+    #     return tile_layer, bounds
+    # else:
+    #     return tile_layer
 
 
 def get_palettable(types=None):
@@ -10264,7 +10636,6 @@ def get_palettable(types=None):
     palettes = []
 
     if "cartocolors" in types:
-
         cartocolors_diverging = [
             f"cartocolors.diverging.{c}"
             for c in dir(palettable.cartocolors.diverging)[:-19]
@@ -10286,7 +10657,6 @@ def get_palettable(types=None):
         )
 
     if "cmocean" in types:
-
         cmocean_diverging = [
             f"cmocean.diverging.{c}" for c in dir(palettable.cmocean.diverging)[:-19]
         ]
@@ -10297,7 +10667,6 @@ def get_palettable(types=None):
         palettes = palettes + cmocean_diverging + cmocean_sequential
 
     if "colorbrewer" in types:
-
         colorbrewer_diverging = [
             f"colorbrewer.diverging.{c}"
             for c in dir(palettable.colorbrewer.diverging)[:-19]
@@ -10482,6 +10851,8 @@ def points_from_xy(data, x="longitude", y="latitude", z=None, crs=None, **kwargs
 
     if crs is None:
         crs = "epsg:4326"
+
+    data = github_raw_url(data)
 
     if isinstance(data, pd.DataFrame):
         df = data
@@ -10724,8 +11095,8 @@ def geojson_to_df(in_geojson, encoding="utf-8", drop_geometry=True):
     from urllib.request import urlopen
 
     if isinstance(in_geojson, str):
-
         if in_geojson.startswith("http"):
+            in_geojson = github_raw_url(in_geojson)
             with urlopen(in_geojson) as f:
                 data = json.load(f)
         else:
@@ -10770,6 +11141,7 @@ def ee_join_table(ee_object, data, src_key, dst_key=None):
         dst_key = src_key
 
     if isinstance(data, str):
+        data = github_raw_url(data)
         if data.endswith(".csv"):
             df = pd.read_csv(data)
         elif data.endswith(".geojson"):
@@ -10789,6 +11161,7 @@ def ee_join_table(ee_object, data, src_key, dst_key=None):
     else:
         raise TypeError("The input data must be of type str or pandas.DataFrame.")
 
+    df[dst_key] = df[dst_key].astype(str)
     df.set_index(dst_key, inplace=True)
     df = df[~df.index.duplicated(keep="first")]
     table = ee.Dictionary(df.to_dict("index"))
@@ -10864,12 +11237,27 @@ def image_to_numpy(image):
         np.array: A numpy array.
     """
     import rasterio
+    from osgeo import gdal
+    from contextlib import contextmanager
 
-    if not os.path.exists(image):
-        raise FileNotFoundError("The provided input file could not be found.")
+    @contextmanager
+    def gdal_error_handler():
+        """Context manager for GDAL error handler."""
+        gdal.PushErrorHandler("CPLQuietErrorHandler")
+        try:
+            yield
+        finally:
+            gdal.PopErrorHandler()
 
-    with rasterio.open(image, "r") as ds:
-        arr = ds.read()  # read all raster values
+    gdal.UseExceptions()
+
+    with gdal_error_handler():
+
+        if not os.path.exists(image):
+            raise FileNotFoundError("The provided input file could not be found.")
+
+        with rasterio.open(image, "r") as ds:
+            arr = ds.read()  # read all raster values
 
     return arr
 
@@ -10983,6 +11371,10 @@ def view_lidar(filename, cmap="terrain", backend="pyvista", background=None, **k
         ValueError: If the backend is not supported.
     """
 
+    if in_colab_shell():
+        print("The view_lidar() function is not supported in Colab.")
+        return
+
     warnings.filterwarnings("ignore")
     filename = os.path.abspath(filename)
     if not os.path.exists(filename):
@@ -10990,7 +11382,6 @@ def view_lidar(filename, cmap="terrain", backend="pyvista", background=None, **k
 
     backend = backend.lower()
     if backend in ["pyvista", "ipygany", "panel"]:
-
         try:
             import pyntcloud
         except ImportError:
@@ -11052,7 +11443,7 @@ def read_lidar(filename, **kwargs):
     """Read a LAS file.
 
     Args:
-        filename (str): Path to a LAS file.
+        filename (str): A local file path or HTTP URL to a LAS file.
 
     Returns:
         LasData: The LasData object return by laspy.read.
@@ -11061,71 +11452,82 @@ def read_lidar(filename, **kwargs):
         import laspy
     except ImportError:
         print(
-            "The laspy package is required for this function. Use pip install laspy to install it."
+            "The laspy package is required for this function. Use `pip install laspy[lazrs,laszip]` to install it."
         )
         return
+
+    if (
+        isinstance(filename, str)
+        and filename.startswith("http")
+        and (filename.endswith(".las") or filename.endswith(".laz"))
+    ):
+        filename = github_raw_url(filename)
+        filename = download_file(filename)
 
     return laspy.read(filename, **kwargs)
 
 
-def download_file(
-    url=None,
-    output=None,
-    quiet=False,
-    proxy=None,
-    speed=None,
-    use_cookies=True,
-    verify=True,
-    id=None,
-    fuzzy=False,
-    resume=False,
-    unzip=True,
-    overwrite=False,
+def convert_lidar(
+    source, destination=None, point_format_id=None, file_version=None, **kwargs
 ):
-    """Download a file from URL, including Google Drive shared URL.
+    """Converts a Las from one point format to another Automatically upgrades the file version if source file version
+        is not compatible with the new point_format_id
 
     Args:
-        url (str, optional): Google Drive URL is also supported. Defaults to None.
-        output (str, optional): Output filename. Default is basename of URL.
-        quiet (bool, optional): Suppress terminal output. Default is False.
-        proxy (str, optional): Proxy. Defaults to None.
-        speed (float, optional): Download byte size per second (e.g., 256KB/s = 256 * 1024). Defaults to None.
-        use_cookies (bool, optional): Flag to use cookies. Defaults to True.
-        verify (bool | str, optional): Either a bool, in which case it controls whether the server's TLS certificate is verified, or a string, in which case it must be a path to a CA bundle to use. Default is True.. Defaults to True.
-        id (str, optional): Google Drive's file ID. Defaults to None.
-        fuzzy (bool, optional): Fuzzy extraction of Google Drive's file Id. Defaults to False.
-        resume (bool, optional): Resume the download from existing tmp file if possible. Defaults to False.
-        unzip (bool, optional): Unzip the file. Defaults to True.
-        overwrite (bool, optional): Overwrite the file if it already exists. Defaults to False.
+        source (str | laspy.lasdatas.base.LasBase): The source data to be converted.
+        destination (str, optional): The destination file path. Defaults to None.
+        point_format_id (int, optional): The new point format id (the default is None, which won't change the source format id).
+        file_version (str, optional): The new file version. None by default which means that the file_version may be upgraded
+            for compatibility with the new point_format. The file version will not be downgraded.
 
     Returns:
-        str: The output file path.
+        aspy.lasdatas.base.LasBase: The converted LasData object.
     """
+    try:
+        import laspy
+    except ImportError:
+        print(
+            "The laspy package is required for this function. Use `pip install laspy[lazrs,laszip]` to install it."
+        )
+        return
 
-    import gdown
+    if isinstance(source, str):
+        source = read_lidar(source)
 
-    if isinstance(url, str):
-        if os.path.exists(os.path.abspath(output)) and (not overwrite):
-            print(
-                f"{output} already exists. Skip downloading. Set overwrite=True to overwrite."
-            )
-            return
-
-    if "https://drive.google.com/file/d/" in url:
-        fuzzy = True
-
-    output = gdown.download(
-        url, output, quiet, proxy, speed, use_cookies, verify, id, fuzzy, resume
+    las = laspy.convert(
+        source, point_format_id=point_format_id, file_version=file_version
     )
 
-    if unzip and output.endswith(".zip"):
+    if destination is None:
+        return las
+    else:
+        destination = check_file_path(destination)
+        write_lidar(las, destination, **kwargs)
+        return destination
 
-        with zipfile.ZipFile(output, "r") as zip_ref:
-            if not quiet:
-                print("Extracting files...")
-            zip_ref.extractall(os.path.dirname(output))
 
-    return os.path.abspath(output)
+def write_lidar(source, destination, do_compress=None, laz_backend=None):
+    """Writes to a stream or file.
+
+    Args:
+        source (str | laspy.lasdatas.base.LasBase): The source data to be written.
+        destination (str): The destination filepath.
+        do_compress (bool, optional): Flags to indicate if you want to compress the data. Defaults to None.
+        laz_backend (str, optional): The laz backend to use. Defaults to None.
+    """
+
+    try:
+        import laspy
+    except ImportError:
+        print(
+            "The laspy package is required for this function. Use `pip install laspy[lazrs,laszip]` to install it."
+        )
+        return
+
+    if isinstance(source, str):
+        source = read_lidar(source)
+
+    source.write(destination, do_compress=do_compress, laz_backend=laz_backend)
 
 
 def download_folder(
@@ -11280,7 +11682,6 @@ def clip_image(image, mask, output):
         if not os.path.exists(mask):
             raise FileNotFoundError(f"{mask} does not exist.")
     elif isinstance(mask, list) or isinstance(mask, dict):
-
         if isinstance(mask, list):
             geojson = {
                 "type": "FeatureCollection",
@@ -11420,13 +11821,12 @@ def read_netcdf(filename, **kwargs):
 def netcdf_tile_layer(
     filename,
     variables=None,
-    palette=None,
+    colormap=None,
     vmin=None,
     vmax=None,
     nodata=None,
     port="default",
     debug=False,
-    projection="EPSG:3857",
     attribution=None,
     tile_format="ipyleaflet",
     layer_name="NetCDF layer",
@@ -11447,9 +11847,9 @@ def netcdf_tile_layer(
         filename (str): File path or HTTP URL to the netCDF file.
         variables (int, optional): The variable/band names to extract data from the netCDF file. Defaults to None. If None, all variables will be extracted.
         port (str, optional): The port to use for the server. Defaults to "default".
-        palette (str, optional): The name of the color palette from `palettable` to use when plotting a single band. See https://jiffyclub.github.io/palettable. Default is greyscale
-        vmin (float, optional): The minimum value to use when colormapping the palette when plotting a single band. Defaults to None.
-        vmax (float, optional): The maximum value to use when colormapping the palette when plotting a single band. Defaults to None.
+        colormap (str, optional): The name of the colormap from `matplotlib` to use when plotting a single band. See https://matplotlib.org/stable/gallery/color/colormap_reference.html. Default is greyscale.
+        vmin (float, optional): The minimum value to use when colormapping the colormap when plotting a single band. Defaults to None.
+        vmax (float, optional): The maximum value to use when colormapping the colormap when plotting a single band. Defaults to None.
         nodata (float, optional): The value from the band to use to interpret as not valid data. Defaults to None.
         debug (bool, optional): If True, the server will be started in debug mode. Defaults to False.
         projection (str, optional): The projection of the GeoTIFF. Defaults to "EPSG:3857".
@@ -11513,9 +11913,8 @@ def netcdf_tile_layer(
         output,
         port=port,
         debug=debug,
-        projection=projection,
-        band=band_idx,
-        palette=palette,
+        indexes=band_idx,
+        colormap=colormap,
         vmin=vmin,
         vmax=vmax,
         nodata=nodata,
@@ -11646,7 +12045,10 @@ def classify(
 
     if cmap is None:
         cmap = "Blues"
-    cmap = plt.cm.get_cmap(cmap, k)
+    try:
+        cmap = plt.get_cmap(cmap, k)
+    except:
+        cmap = plt.cm.get_cmap(cmap, k)
     if colors is None:
         colors = [mpl.colors.rgb2hex(cmap(i))[1:] for i in range(cmap.N)]
         colors = ["#" + i for i in colors]
@@ -11739,12 +12141,15 @@ def classify(
     return df, legend_dict
 
 
-def image_count(collection, region=None, start_date=None, end_date=None, clip=False):
+def image_count(
+    collection, region=None, band=None, start_date=None, end_date=None, clip=False
+):
     """Create an image with the number of available images for a specific region.
     Args:
         collection (ee.ImageCollection): The collection to be queried.
         region (ee.Geometry | ee.FeatureCollection, optional): The region to be queried.
         start_date (str | ee.Date, optional): The start date of the query.
+        band (str, optional): The band to be queried.
         end_date (str | ee.Date, optional): The end date of the query.
         clip (bool, optional): Whether to clip the image to the region.
 
@@ -11767,8 +12172,9 @@ def image_count(collection, region=None, start_date=None, end_date=None, clip=Fa
     else:
         raise ValueError("start_date and end_date must be provided.")
 
-    first_image = collection.first()
-    first_band = first_image.bandNames().get(0)
+    if band is None:
+        first_image = collection.first()
+        band = first_image.bandNames().get(0)
 
     if region is not None:
         collection = collection.filterBounds(region)
@@ -11776,38 +12182,16 @@ def image_count(collection, region=None, start_date=None, end_date=None, clip=Fa
     if start_date is not None and end_date is not None:
         collection = collection.filterDate(start_date, end_date)
 
-    image = collection.select([first_band]).reduce(ee.Reducer.count())
+    image = (
+        collection.filter(ee.Filter.listContains("system:band_names", band))
+        .select([band])
+        .reduce(ee.Reducer.count())
+    )
 
     if clip:
         image = image.clip(region)
 
     return image
-
-
-def check_cmap(cmap):
-    """Check the colormap and return a list of colors.
-
-    Args:
-        cmap (str | list | Box): The colormap to check.
-
-    Returns:
-        list: A list of colors.
-    """
-
-    from box import Box
-    from .colormaps import get_palette
-
-    if isinstance(cmap, str):
-        try:
-            return get_palette(cmap)
-        except Exception as e:
-            raise Exception(f"{cmap} is not a valid colormap.")
-    elif isinstance(cmap, Box):
-        return list(cmap["default"])
-    elif isinstance(cmap, list) or isinstance(cmap, tuple):
-        return cmap
-    else:
-        raise Exception(f"{cmap} is not a valid colormap.")
 
 
 def dynamic_world(
@@ -11915,10 +12299,17 @@ def dynamic_world(
         # Create the Top1 Probability Hillshade
         top1Probability = meanProbability.reduce(ee.Reducer.max())
 
+        if clip and (region is not None):
+            if isinstance(region, ee.Geometry):
+                top1Probability = top1Probability.clip(region)
+            elif isinstance(region, ee.FeatureCollection):
+                top1Probability = top1Probability.clipToCollection(region)
+            elif isinstance(region, ee.Feature):
+                top1Probability = top1Probability.clip(region.geometry())
+
         if return_type == "probability":
             return top1Probability
         else:
-
             top1Confidence = top1Probability.multiply(100).int()
             hillshade = ee.Terrain.hillshade(top1Confidence).divide(255)
             rgbImage = dwComposite.visualize(**dwVisParams).divide(255)
@@ -11978,11 +12369,17 @@ def download_ee_image(
     filename,
     region=None,
     crs=None,
+    crs_transform=None,
     scale=None,
-    resampling=None,
+    resampling="near",
     dtype=None,
     overwrite=True,
     num_threads=None,
+    max_tile_size=None,
+    max_tile_dim=None,
+    shape=None,
+    scale_offset=False,
+    unmask_value=None,
     **kwargs,
 ):
     """Download an Earth Engine Image as a GeoTIFF. Images larger than the `Earth Engine size limit are split and downloaded as
@@ -11994,6 +12391,10 @@ def download_ee_image(
         region (ee.Geometry, optional): Region defined by geojson polygon in WGS84. Defaults to the entire image granule.
         crs (str, optional): Reproject image(s) to this EPSG or WKT CRS.  Where image bands have different CRSs, all are
             re-projected to this CRS. Defaults to the CRS of the minimum scale band.
+        crs_transform (list, optional): tuple of float, list of float, rio.Affine, optional
+            List of 6 numbers specifying an affine transform in the specified CRS.  In row-major order:
+            [xScale, xShearing, xTranslation, yShearing, yScale, yTranslation].  All bands are re-projected to
+            this transform.
         scale (float, optional): Resample image(s) to this pixel scale (size) (m).  Where image bands have different scales,
             all are resampled to this scale.  Defaults to the minimum scale of image bands.
         resampling (ResamplingMethod, optional): Resampling method, can be 'near', 'bilinear', 'bicubic', or 'average'. Defaults to None.
@@ -12001,24 +12402,47 @@ def download_ee_image(
             or `float64`).  Defaults to auto select a minimum size type that can represent the range of pixel values.
         overwrite (bool, optional): Overwrite the destination file if it exists. Defaults to True.
         num_threads (int, optional): Number of tiles to download concurrently. Defaults to a sensible auto value.
+        max_tile_size: int, optional
+            Maximum tile size (MB).  If None, defaults to the Earth Engine download size limit (32 MB).
+        max_tile_dim: int, optional
+            Maximum tile width/height (pixels).  If None, defaults to Earth Engine download limit (10000).
+        shape: tuple of int, optional
+            (height, width) dimensions to export (pixels).
+        scale_offset: bool, optional
+            Whether to apply any EE band scales and offsets to the image.
+        unmask_value (float, optional): The value to use for pixels that are masked in the input image. If the exported image contains
+            zero values, you should set the unmask value to a  non-zero value so that the zero values are not treated as missing data. Defaults to None.
 
     """
+
+    if os.environ.get("USE_MKDOCS") is not None:
+        return
 
     try:
         import geedim as gd
     except ImportError:
         raise ImportError(
-            "Please install geedim using `mamba install -c conda-forge geedim`"
+            "Please install geedim using `pip install geedim` or `conda install -c conda-forge geedim`"
         )
 
     if not isinstance(image, ee.Image):
         raise ValueError("image must be an ee.Image.")
+
+    if unmask_value is not None:
+        if isinstance(region, ee.Geometry):
+            image = image.clip(region)
+        elif isinstance(region, ee.FeatureCollection):
+            image = image.clipToCollection(region)
+        image = image.unmask(unmask_value, sameFootprint=False)
 
     if region is not None:
         kwargs["region"] = region
 
     if crs is not None:
         kwargs["crs"] = crs
+
+    if crs_transform is not None:
+        kwargs["crs_transform"] = crs_transform
 
     if scale is not None:
         kwargs["scale"] = scale
@@ -12028,6 +12452,18 @@ def download_ee_image(
 
     if dtype is not None:
         kwargs["dtype"] = dtype
+
+    if max_tile_size is not None:
+        kwargs["max_tile_size"] = max_tile_size
+
+    if max_tile_dim is not None:
+        kwargs["max_tile_dim"] = max_tile_dim
+
+    if shape is not None:
+        kwargs["shape"] = shape
+
+    if scale_offset:
+        kwargs["scale_offset"] = scale_offset
 
     img = gd.download.BaseImage(image)
     img.download(filename, overwrite=overwrite, num_threads=num_threads, **kwargs)
@@ -12039,14 +12475,20 @@ def download_ee_image_tiles(
     out_dir=None,
     prefix=None,
     crs=None,
+    crs_transform=None,
     scale=None,
-    resampling=None,
+    resampling="near",
     dtype=None,
     overwrite=True,
     num_threads=None,
+    max_tile_size=None,
+    max_tile_dim=None,
+    shape=None,
+    scale_offset=False,
+    unmask_value=None,
+    column=None,
     **kwargs,
 ):
-
     """Download an Earth Engine Image as small tiles based on ee.FeatureCollection. Images larger than the `Earth Engine size limit are split and downloaded as
         separate tiles, then re-assembled into a single GeoTIFF. See https://github.com/dugalh/geedim/blob/main/geedim/download.py#L574
 
@@ -12057,6 +12499,10 @@ def download_ee_image_tiles(
         prefix (str, optional): The prefix for the output file. Defaults to None.
         crs (str, optional): Reproject image(s) to this EPSG or WKT CRS.  Where image bands have different CRSs, all are
             re-projected to this CRS. Defaults to the CRS of the minimum scale band.
+        crs_transform (list, optional): tuple of float, list of float, rio.Affine, optional
+            List of 6 numbers specifying an affine transform in the specified CRS.  In row-major order:
+            [xScale, xShearing, xTranslation, yShearing, yScale, yTranslation].  All bands are re-projected to
+            this transform.
         scale (float, optional): Resample image(s) to this pixel scale (size) (m).  Where image bands have different scales,
             all are resampled to this scale.  Defaults to the minimum scale of image bands.
         resampling (ResamplingMethod, optional): Resampling method, can be 'near', 'bilinear', 'bicubic', or 'average'. Defaults to None.
@@ -12064,8 +12510,25 @@ def download_ee_image_tiles(
             or `float64`).  Defaults to auto select a minimum size type that can represent the range of pixel values.
         overwrite (bool, optional): Overwrite the destination file if it exists. Defaults to True.
         num_threads (int, optional): Number of tiles to download concurrently. Defaults to a sensible auto value.
+        max_tile_size: int, optional
+            Maximum tile size (MB).  If None, defaults to the Earth Engine download size limit (32 MB).
+        max_tile_dim: int, optional
+            Maximum tile width/height (pixels).  If None, defaults to Earth Engine download limit (10000).
+        shape: tuple of int, optional
+            (height, width) dimensions to export (pixels).
+        scale_offset: bool, optional
+            Whether to apply any EE band scales and offsets to the image.
+        unmask_value (float, optional): The value to use for pixels that are masked in the input image. If the exported image contains zero values,
+            you should set the unmask value to a  non-zero value so that the zero values are not treated as missing data. Defaults to None.
+        column (str, optional): The column name to use for the filename. Defaults to None.
 
     """
+    import time
+
+    start = time.time()
+
+    if os.environ.get("USE_MKDOCS") is not None:
+        return
 
     if not isinstance(features, ee.FeatureCollection):
         raise ValueError("features must be an ee.FeatureCollection.")
@@ -12082,10 +12545,15 @@ def download_ee_image_tiles(
     count = features.size().getInfo()
     collection = features.toList(count)
 
+    if column is not None:
+        names = features.aggregate_array(column).getInfo()
+    else:
+        names = [str(i + 1).zfill(len(str(count))) for i in range(count)]
+
     for i in range(count):
         region = ee.Feature(collection.get(i)).geometry()
         filename = os.path.join(
-            out_dir, "{}{}.tif".format(prefix, str(i + 1).zfill(len(str(count))))
+            out_dir, "{}{}.tif".format(prefix, names[i].replace("/", "_"))
         )
         print(f"Downloading {i + 1}/{count}: {filename}")
         download_ee_image(
@@ -12093,13 +12561,146 @@ def download_ee_image_tiles(
             filename,
             region,
             crs,
+            crs_transform,
             scale,
             resampling,
             dtype,
             overwrite,
             num_threads,
+            max_tile_size,
+            max_tile_dim,
+            shape,
+            scale_offset,
+            unmask_value,
             **kwargs,
         )
+
+    print(f"Downloaded {count} tiles in {time.time() - start} seconds.")
+
+
+def download_ee_image_tiles_parallel(
+    image,
+    features,
+    out_dir=None,
+    prefix=None,
+    crs=None,
+    crs_transform=None,
+    scale=None,
+    resampling="near",
+    dtype=None,
+    overwrite=True,
+    num_threads=None,
+    max_tile_size=None,
+    max_tile_dim=None,
+    shape=None,
+    scale_offset=False,
+    unmask_value=None,
+    column=None,
+    job_args={"n_jobs": -1},
+    ee_init=True,
+    project_id=None,
+    **kwargs,
+):
+    """Download an Earth Engine Image as small tiles based on ee.FeatureCollection. Images larger than the `Earth Engine size limit are split and downloaded as
+        separate tiles, then re-assembled into a single GeoTIFF. See https://github.com/dugalh/geedim/blob/main/geedim/download.py#L574
+
+    Args:
+        image (ee.Image): The image to be downloaded.
+        features (ee.FeatureCollection): The features to loop through to download image.
+        out_dir (str, optional): The output directory. Defaults to None.
+        prefix (str, optional): The prefix for the output file. Defaults to None.
+        crs (str, optional): Reproject image(s) to this EPSG or WKT CRS.  Where image bands have different CRSs, all are
+            re-projected to this CRS. Defaults to the CRS of the minimum scale band.
+        crs_transform (list, optional): tuple of float, list of float, rio.Affine, optional
+            List of 6 numbers specifying an affine transform in the specified CRS.  In row-major order:
+            [xScale, xShearing, xTranslation, yShearing, yScale, yTranslation].  All bands are re-projected to
+            this transform.
+        scale (float, optional): Resample image(s) to this pixel scale (size) (m).  Where image bands have different scales,
+            all are resampled to this scale.  Defaults to the minimum scale of image bands.
+        resampling (ResamplingMethod, optional): Resampling method, can be 'near', 'bilinear', 'bicubic', or 'average'. Defaults to None.
+        dtype (str, optional): Convert to this data type (`uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`, `float32`
+            or `float64`).  Defaults to auto select a minimum size type that can represent the range of pixel values.
+        overwrite (bool, optional): Overwrite the destination file if it exists. Defaults to True.
+        num_threads (int, optional): Number of tiles to download concurrently. Defaults to a sensible auto value.
+        max_tile_size: int, optional
+            Maximum tile size (MB).  If None, defaults to the Earth Engine download size limit (32 MB).
+        max_tile_dim: int, optional
+            Maximum tile width/height (pixels).  If None, defaults to Earth Engine download limit (10000).
+        shape: tuple of int, optional
+            (height, width) dimensions to export (pixels).
+        scale_offset: bool, optional
+            Whether to apply any EE band scales and offsets to the image.
+        unmask_value (float, optional): The value to use for pixels that are masked in the input image. If the exported image contains zero values,
+            you should set the unmask value to a  non-zero value so that the zero values are not treated as missing data. Defaults to None.
+        column (str, optional): The column name in the feature collection to use as the filename. Defaults to None.
+        job_args (dict, optional): The arguments to pass to joblib.Parallel. Defaults to {"n_jobs": -1}.
+        ee_init (bool, optional): Whether to initialize Earth Engine. Defaults to True.
+        project_id (str, optional): The Earth Engine project ID. Defaults to None.
+
+    """
+    import joblib
+    import time
+
+    start = time.time()
+
+    if os.environ.get("USE_MKDOCS") is not None:
+        return
+
+    if not isinstance(features, ee.FeatureCollection):
+        raise ValueError("features must be an ee.FeatureCollection.")
+
+    if out_dir is None:
+        out_dir = os.getcwd()
+
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    if prefix is None:
+        prefix = ""
+
+    count = features.size().getInfo()
+    if column is not None:
+        names = features.aggregate_array(column).getInfo()
+    else:
+        names = [str(i + 1).zfill(len(str(count))) for i in range(count)]
+    collection = features.toList(count)
+
+    def download_data(index):
+        if ee_init:
+            ee_initialize(
+                opt_url="https://earthengine-highvolume.googleapis.com",
+                project=project_id,
+            )
+        region = ee.Feature(collection.get(index)).geometry()
+        filename = os.path.join(
+            out_dir, "{}{}.tif".format(prefix, names[index].replace("/", "_"))
+        )
+        print(f"Downloading {index + 1}/{count}: {filename}")
+
+        download_ee_image(
+            image,
+            filename,
+            region,
+            crs,
+            crs_transform,
+            scale,
+            resampling,
+            dtype,
+            overwrite,
+            num_threads,
+            max_tile_size,
+            max_tile_dim,
+            shape,
+            scale_offset,
+            unmask_value,
+            **kwargs,
+        )
+
+    with joblib.Parallel(**job_args) as parallel:
+        parallel(joblib.delayed(download_data)(index) for index in range(count))
+
+    end = time.time()
+    print(f"Finished in {end - start} seconds.")
 
 
 def download_ee_image_collection(
@@ -12108,11 +12709,17 @@ def download_ee_image_collection(
     filenames=None,
     region=None,
     crs=None,
+    crs_transform=None,
     scale=None,
-    resampling=None,
+    resampling="near",
     dtype=None,
     overwrite=True,
     num_threads=None,
+    max_tile_size=None,
+    max_tile_dim=None,
+    shape=None,
+    scale_offset=False,
+    unmask_value=None,
     **kwargs,
 ):
     """Download an Earth Engine ImageCollection as GeoTIFFs. Images larger than the `Earth Engine size limit are split and downloaded as
@@ -12125,6 +12732,10 @@ def download_ee_image_collection(
         region (ee.Geometry, optional): Region defined by geojson polygon in WGS84. Defaults to the entire image granule.
         crs (str, optional): Reproject image(s) to this EPSG or WKT CRS.  Where image bands have different CRSs, all are
             re-projected to this CRS. Defaults to the CRS of the minimum scale band.
+        crs_transform (list, optional): tuple of float, list of float, rio.Affine, optional
+            List of 6 numbers specifying an affine transform in the specified CRS.  In row-major order:
+            [xScale, xShearing, xTranslation, yShearing, yScale, yTranslation].  All bands are re-projected to
+            this transform.
         scale (float, optional): Resample image(s) to this pixel scale (size) (m).  Where image bands have different scales,
             all are resampled to this scale.  Defaults to the minimum scale of image bands.
         resampling (ResamplingMethod, optional): Resampling method, can be 'near', 'bilinear', 'bicubic', or 'average'. Defaults to None.
@@ -12132,7 +12743,16 @@ def download_ee_image_collection(
             or `float64`).  Defaults to auto select a minimum size type that can represent the range of pixel values.
         overwrite (bool, optional): Overwrite the destination file if it exists. Defaults to True.
         num_threads (int, optional): Number of tiles to download concurrently. Defaults to a sensible auto value.
-
+        max_tile_size: int, optional
+            Maximum tile size (MB).  If None, defaults to the Earth Engine download size limit (32 MB).
+        max_tile_dim: int, optional
+            Maximum tile width/height (pixels).  If None, defaults to Earth Engine download limit (10000).
+        shape: tuple of int, optional
+            (height, width) dimensions to export (pixels).
+        scale_offset: bool, optional
+            Whether to apply any EE band scales and offsets to the image.
+        unmask_value (float, optional): The value to use for pixels that are masked in the input image. If the exported image contains zero values,
+            you should set the unmask value to a  non-zero value so that the zero values are not treated as missing data. Defaults to None.
     """
 
     if not isinstance(collection, ee.ImageCollection):
@@ -12145,7 +12765,6 @@ def download_ee_image_collection(
         os.makedirs(out_dir)
 
     try:
-
         count = int(collection.size().getInfo())
         print(f"Total number of images: {count}\n")
 
@@ -12170,11 +12789,17 @@ def download_ee_image_collection(
                 filename,
                 region,
                 crs,
+                crs_transform,
                 scale,
                 resampling,
                 dtype,
                 overwrite,
                 num_threads,
+                max_tile_size,
+                max_tile_dim,
+                shape,
+                scale_offset,
+                unmask_value,
                 **kwargs,
             )
 
@@ -12196,7 +12821,10 @@ def get_palette_colors(cmap_name=None, n_class=None, hashtag=False):
     import matplotlib as mpl
     import matplotlib.pyplot as plt
 
-    cmap = plt.cm.get_cmap(cmap_name, n_class)
+    try:
+        cmap = plt.get_cmap(cmap_name, n_class)
+    except:
+        cmap = plt.cm.get_cmap(cmap_name, n_class)
     colors = [mpl.colors.rgb2hex(cmap(i))[1:] for i in range(cmap.N)]
     if hashtag:
         colors = ["#" + i for i in colors]
@@ -12225,6 +12853,10 @@ def plot_raster(
 
     """
     if os.environ.get("USE_MKDOCS") is not None:
+        return
+
+    if in_colab_shell():
+        print("The plot_raster() function is not supported in Colab.")
         return
 
     try:
@@ -12288,6 +12920,10 @@ def plot_raster_3d(
     """
 
     if os.environ.get("USE_MKDOCS") is not None:
+        return
+
+    if in_colab_shell():
+        print("The plot_raster_3d() function is not supported in Colab.")
         return
 
     try:
@@ -12384,3 +13020,2806 @@ def bbox_coords(geometry, decimals=4):
         return [west, south, east, north]
     else:
         return None
+
+
+def requireJS(lib_path=None, Map=None):
+    """Import Earth Engine JavaScript libraries. Based on the Open Earth Engine Library (OEEL).
+        For more info, visit https://www.open-geocomputing.org/OpenEarthEngineLibrary.
+
+    Args:
+        lib_path (str, optional): A local file path or HTTP URL to a JavaScript library. It can also be in a format like 'users/gena/packages:grid'. Defaults to None.
+        Map (geemap.Map, optional): An geemap.Map object. Defaults to None.
+
+    Returns:
+        object: oeel object.
+    """
+    try:
+        from oeel import oeel
+    except ImportError:
+        raise ImportError(
+            "oeel is required for requireJS. Please install it using 'pip install oeel'."
+        )
+
+    ee_initialize()
+
+    if lib_path is None:
+        if Map is not None:
+            oeel.setMap(Map)
+        return oeel
+    elif isinstance(lib_path, str):
+        if lib_path.startswith("http"):
+            lib_path = get_direct_url(lib_path)
+
+        lib_path = change_require(lib_path)
+
+        if Map is not None:
+            oeel.setMap(Map)
+        return oeel.requireJS(lib_path)
+
+    else:
+        raise ValueError("lib_path must be a string.")
+
+
+def setupJS():
+    """Install npm packages for Earth Engine JavaScript libraries. Based on the Open Earth Engine Library (OEEL)."""
+    try:
+        os.system("npm install @google/earthengine")
+        os.system("npm install zeromq@6.0.0-beta.6")
+        os.system("npm install request")
+    except Exception as e:
+        raise Exception(
+            f"Error installing npm packages: {e}. Make sure that you have installed nodejs. See https://nodejs.org/"
+        )
+
+
+def change_require(lib_path):
+    if not isinstance(lib_path, str):
+        raise ValueError("lib_path must be a string.")
+
+    if lib_path.startswith("http"):
+        if lib_path.startswith("https://github.com") and "blob" in lib_path:
+            lib_path = lib_path.replace("blob", "raw")
+        basename = os.path.basename(lib_path)
+        r = requests.get(lib_path, allow_redirects=True)
+        open(basename, "wb").write(r.content)
+        lib_path = basename
+
+    elif (
+        lib_path.startswith("user") or lib_path.startswith("projects")
+    ) and ":" in lib_path:
+        repo = f'https://earthengine.googlesource.com/{lib_path.split(":")[0]}'
+        start_index = lib_path.index("/", lib_path.index("/") + 1) + 1
+        lib_path = lib_path[start_index:].replace(":", "/")
+        if not os.path.exists(lib_path):
+            cmd = f"git clone {repo}"
+            os.system(cmd)
+
+    if not os.path.exists(lib_path):
+        raise ValueError(f"{lib_path} does not exist.")
+
+    output = []
+    with open(lib_path, "r") as f:
+        lines = f.readlines()
+
+    for line in lines:
+        if "require(" in line and ":" in line and (not line.strip().startswith("//")):
+            new_line = "// " + line
+            output.append(new_line)
+
+            if "users/" in line:
+                start_index = line.index("users/")
+                end_index = line.index("/", start_index + 6)
+            elif "projects" in line:
+                start_index = line.index("projects/")
+                end_index = line.index("/", start_index + 9)
+
+            header = line[start_index:end_index]
+            new_line = line.replace(header, os.getcwd()).replace(":", "/")
+            output.append(new_line)
+
+        else:
+            output.append(line)
+
+    with open(lib_path, "w") as f:
+        f.writelines(output)
+
+    return lib_path
+
+
+def ee_vector_style(
+    collection,
+    column,
+    labels=None,
+    color="black",
+    pointSize=3,
+    pointShape="circle",
+    width=2,
+    fillColor=None,
+    lineType="solid",
+    neighborhood=5,
+    return_fc=False,
+):
+    """Create a vector style for a feature collection.
+
+    Args:
+        collection (ee.FeatureCollection): The input feature collection.
+        column (str): The name of the column to use for styling.
+        labels (list, optional): A list of labels to use for styling. Defaults to None.
+        color (str | list, optional): A default color (CSS 3.0 color value e.g. 'FF0000' or 'red') to use for drawing the features. Supports opacity (e.g.: 'FF000088' for 50% transparent red). Defaults to "black".
+        pointSize (int | list, optional): The default size in pixels of the point markers. Defaults to 3.
+        pointShape (str | list, optional): The default shape of the marker to draw at each point location. One of: circle, square, diamond, cross, plus, pentagram, hexagram, triangle, triangle_up, triangle_down, triangle_left, triangle_right, pentagon, hexagon, star5, star6. This argument also supports the following Matlab marker abbreviations: o, s, d, x, +, p, h, ^, v, <, >. Defaults to "circle".
+        width (int | list, optional): The default line width for lines and outlines for polygons and point shapes. Defaults to 2.
+        fillColor (str | list, optional): The color for filling polygons and point shapes. Defaults to 'color' at 0.66 opacity. Defaults to None.
+        lineType (str | list, optional): The default line style for lines and outlines of polygons and point shapes. Defaults to 'solid'. One of: solid, dotted, dashed. Defaults to "solid".
+        neighborhood (int, optional): If styleProperty is used and any feature has a pointSize or width larger than the defaults, tiling artifacts can occur. Specifies the maximum neighborhood (pointSize + width) needed for any feature. Defaults to 5.
+        return_fc (bool, optional): If True, return an ee.FeatureCollection with a style property. Otherwise, return a styled ee.Image. Defaults to False.
+
+    Returns:
+        ee.FeatureCollection | ee.Image: The styled Earth Engine FeatureCollection or Image.
+    """
+    if not isinstance(collection, ee.FeatureCollection):
+        raise ValueError("collection must be an ee.FeatureCollection.")
+
+    if not isinstance(column, str):
+        raise ValueError("column must be a string.")
+
+    prop_names = ee.Feature(collection.first()).propertyNames().getInfo()
+    if column not in prop_names:
+        raise ValueError(
+            f"{column} is not a property name of the collection. It must be one of {','.join(prop_names)}."
+        )
+
+    if labels is None:
+        labels = collection.aggregate_array(column).distinct().sort().getInfo()
+    elif isinstance(labels, list):
+        collection = collection.filter(ee.Filter.inList(column, labels))
+    elif not isinstance(labels, list):
+        raise ValueError("labels must be a list.")
+
+    size = len(labels)
+    if isinstance(color, str):
+        color = [color] * size
+    elif size != len(color):
+        raise ValueError("labels and color must be the same length.")
+    elif not isinstance(color, list):
+        raise ValueError("color must be a string or a list.")
+
+    if isinstance(pointSize, int):
+        pointSize = [pointSize] * size
+    elif not isinstance(pointSize, list):
+        raise ValueError("pointSize must be an integer or a list.")
+
+    if isinstance(pointShape, str):
+        pointShape = [pointShape] * size
+    elif not isinstance(pointShape, list):
+        raise ValueError("pointShape must be a string or a list.")
+
+    if isinstance(width, int):
+        width = [width] * size
+    elif not isinstance(width, list):
+        raise ValueError("width must be an integer or a list.")
+
+    if fillColor is None:
+        fillColor = color
+    elif isinstance(fillColor, str):
+        fillColor = [fillColor] * size
+    elif not isinstance(fillColor, list):
+        raise ValueError("fillColor must be a list.")
+
+    if not isinstance(neighborhood, int):
+        raise ValueError("neighborhood must be an integer.")
+
+    if isinstance(lineType, str):
+        lineType = [lineType] * size
+    elif not isinstance(lineType, list):
+        raise ValueError("lineType must be a string or list.")
+
+    style_dict = {}
+
+    for i, label in enumerate(labels):
+        style_dict[label] = {
+            "color": color[i],
+            "pointSize": pointSize[i],
+            "pointShape": pointShape[i],
+            "width": width[i],
+            "fillColor": fillColor[i],
+            "lineType": lineType[i],
+        }
+
+    style = ee.Dictionary(style_dict)
+
+    result = collection.map(lambda f: f.set("style", style.get(f.get(column))))
+
+    if return_fc:
+        return result
+    else:
+        return result.style(**{"styleProperty": "style", "neighborhood": neighborhood})
+
+
+def get_direct_url(url):
+    """Get the direct URL for a given URL.
+
+    Args:
+        url (str): The URL to get the direct URL for.
+
+    Returns:
+        str: The direct URL.
+    """
+
+    if not isinstance(url, str):
+        raise ValueError("url must be a string.")
+
+    if not url.startswith("http"):
+        raise ValueError("url must start with http.")
+
+    r = requests.head(url, allow_redirects=True)
+    return r.url
+
+
+def add_crs(filename, epsg):
+    """Add a CRS to a raster dataset.
+
+    Args:
+        filename (str): The filename of the raster dataset.
+        epsg (int | str): The EPSG code of the CRS.
+
+    """
+    try:
+        import rasterio
+    except ImportError:
+        raise ImportError(
+            "rasterio is required for adding a CRS to a raster. Please install it using 'pip install rasterio'."
+        )
+
+    if not os.path.exists(filename):
+        raise ValueError("filename must exist.")
+
+    if isinstance(epsg, int):
+        epsg = f"EPSG:{epsg}"
+    elif isinstance(epsg, str):
+        epsg = "EPSG:" + epsg
+    else:
+        raise ValueError("epsg must be an integer or string.")
+
+    crs = rasterio.crs.CRS({"init": epsg})
+    with rasterio.open(filename, mode="r+") as src:
+        src.crs = crs
+
+
+def jrc_hist_monthly_history(
+    collection=None,
+    region=None,
+    start_date="1984-03-16",
+    end_date=None,
+    start_month=1,
+    end_month=12,
+    scale=None,
+    frequency="year",
+    reducer="mean",
+    denominator=1e4,
+    x_label=None,
+    y_label=None,
+    title=None,
+    width=None,
+    height=None,
+    layout_args={},
+    return_df=False,
+    **kwargs,
+):
+    """Create a JRC monthly history plot.
+
+    Args:
+        collection (ee.ImageCollection, optional): The image collection of JRC surface water monthly history.
+            Default to ee.ImageCollection('JRC/GSW1_4/MonthlyHistory')
+        region (ee.Geometry | ee.FeatureCollection, optional): The region to plot. Default to None.
+        start_date (str, optional): The start date of the plot. Default to '1984-03-16'.
+        end_date (str, optional): The end date of the plot. Default to the current date.
+        start_month (int, optional): The start month of the plot. Default to 1.
+        end_month (int, optional): The end month of the plot. Default to 12.
+        scale (float, optional): The scale to compute the statistics. Default to None.
+        frequency (str, optional): The frequency of the plot. Can be either 'year' or 'month', Default to 'year'.
+        reducer (str, optional): The reducer to compute the statistics. Can be either 'mean', 'min', 'max', 'median', etc. Default to 'mean'.
+        denominator (int, optional): The denominator to convert area from square meters to other units. Default to 1e4, converting to hectares.
+        x_label (str, optional): Label for the x axis. Defaults to None.
+        y_label (str, optional): Label for the y axis. Defaults to None.
+        title (str, optional): Title for the plot. Defaults to None.
+        width (int, optional): Width of the plot in pixels. Defaults to None.
+        height (int, optional): Height of the plot in pixels. Defaults to 500.
+        layout_args (dict, optional): Layout arguments for the plot to be passed to fig.update_layout(),
+        return_df (bool, optional): Whether to return the dataframe of the plot. Defaults to False.
+
+    Returns:
+        pd.DataFrame: Pandas dataframe of the plot.
+    """
+
+    from datetime import date
+    import pandas as pd
+    import plotly.express as px
+
+    if end_date is None:
+        end_date = date.today().strftime("%Y-%m-%d")
+
+    if collection is None:
+        collection = ee.ImageCollection("JRC/GSW1_4/MonthlyHistory")
+
+    if frequency not in ["year", "month"]:
+        raise ValueError("frequency must be 'year' or 'month'.")
+
+    images = (
+        collection.filterDate(start_date, end_date)
+        .filter(ee.Filter.calendarRange(start_month, end_month, "month"))
+        .map(lambda img: img.eq(2).selfMask())
+    )
+
+    def cal_area(img):
+        pixel_area = img.multiply(ee.Image.pixelArea()).divide(denominator)
+        img_area = pixel_area.reduceRegion(
+            **{
+                "geometry": region,
+                "reducer": ee.Reducer.sum(),
+                "scale": scale,
+                "maxPixels": 1e12,
+                "bestEffort": True,
+            }
+        )
+        return img.set({"area": img_area})
+
+    areas = images.map(cal_area)
+    stats = areas.aggregate_array("area").getInfo()
+    values = [item["water"] for item in stats]
+    labels = areas.aggregate_array("system:index").getInfo()
+    months = [label.split("_")[1] for label in labels]
+
+    if frequency == "month":
+        area_df = pd.DataFrame({"Month": labels, "Area": values, "month": months})
+    else:
+        dates = [d[:4] for d in labels]
+        data_dict = {"Date": labels, "Year": dates, "Area": values}
+        df = pd.DataFrame(data_dict)
+        result = df.groupby("Year").agg(reducer)
+        area_df = pd.DataFrame({"Year": result.index, "Area": result["Area"]})
+        area_df = area_df.reset_index(drop=True)
+
+    if return_df:
+        return area_df
+    else:
+        labels = {}
+
+        if x_label is not None:
+            labels[frequency.title()] = x_label
+        if y_label is not None:
+            labels["Area"] = y_label
+
+        fig = px.bar(
+            area_df,
+            x=frequency.title(),
+            y="Area",
+            labels=labels,
+            title=title,
+            width=width,
+            height=height,
+            **kwargs,
+        )
+
+        fig.update_layout(**layout_args)
+
+        return fig
+
+
+def html_to_streamlit(
+    filename, width=None, height=None, scrolling=False, replace_dict={}
+):
+    """Renders an HTML file as a Streamlit component.
+    Args:
+        filename (str): The filename of the HTML file.
+        width (int, optional): Width of the map. Defaults to None.
+        height (int, optional): Height of the map. Defaults to 600.
+        scrolling (bool, optional): Whether to allow the map to scroll. Defaults to False.
+        replace_dict (dict, optional): A dictionary of strings to replace in the HTML file. Defaults to {}.
+
+    Raises:
+        ValueError: If the filename does not exist.
+
+    Returns:
+        streamlit.components: components.html object.
+    """
+
+    import streamlit.components.v1 as components
+
+    if not os.path.exists(filename):
+        raise ValueError("filename must exist.")
+
+    f = open(filename, "r")
+
+    html = f.read()
+
+    for key, value in replace_dict.items():
+        html = html.replace(key, value)
+
+    f.close()
+    return components.html(html, width=width, height=height, scrolling=scrolling)
+
+
+def image_convolution(
+    image, kernel=None, resample=None, projection="EPSG:3857", **kwargs
+):
+    """Performs a convolution on an image.
+
+    Args:
+        image (ee.Image | ee.ImageCollection): The image to convolve.
+        kernel (ee.Kernel, optional): The kernel to convolve with. Defaults to None, a 7x7 gaussian kernel.
+        resample (str, optional): The resample method to use. It can be either 'bilinear' or 'bicubic'". Defaults to None, which uses the image's resample method.
+        projection (str, optional): The projection to use. Defaults to 'EPSG:3857'.
+
+    Returns:
+        ee.Image: The convolved image.
+    """
+    if isinstance(image, ee.ImageCollection):
+        image = image.mosaic()
+    elif not isinstance(image, ee.Image):
+        raise ValueError("image must be an ee.Image or ee.ImageCollection.")
+
+    if kernel is None:
+        kernel = ee.Kernel.gaussian(radius=3, sigma=2, units="pixels", normalize=True)
+    elif not isinstance(kernel, ee.Kernel):
+        raise ValueError("kernel must be an ee.Kernel.")
+
+    if resample is not None:
+        if resample not in ["bilinear", "bicubic"]:
+            raise ValueError("resample must be one of 'bilinear' or 'bicubic'")
+
+    result = image.convolve(kernel)
+
+    if resample is not None:
+        result = result.resample(resample)
+
+    return result.setDefaultProjection(projection)
+
+
+def download_ned(region, out_dir=None, return_url=False, download_args={}, **kwargs):
+    """Download the US National Elevation Datasets (NED) for a region.
+
+    Args:
+        region (str | list): A filepath to a vector dataset or a list of bounds in the form of [minx, miny, maxx, maxy].
+        out_dir (str, optional): The directory to download the files to. Defaults to None, which uses the current working directory.
+        return_url (bool, optional): Whether to return the download URLs of the files. Defaults to False.
+        download_args (dict, optional): A dictionary of arguments to pass to the download_file function. Defaults to {}.
+
+    Returns:
+        list: A list of the download URLs of the files if return_url is True.
+    """
+    import geopandas as gpd
+
+    if out_dir is None:
+        out_dir = os.getcwd()
+    else:
+        out_dir = os.path.abspath(out_dir)
+
+    if isinstance(region, str):
+        if region.startswith("http"):
+            region = github_raw_url(region)
+            region = download_file(region)
+        elif not os.path.exists(region):
+            raise ValueError("region must be a path or a URL to a vector dataset.")
+
+        roi = gpd.read_file(region, **kwargs)
+        roi = roi.to_crs(epsg=4326)
+        bounds = roi.total_bounds
+
+    elif isinstance(region, list):
+        bounds = region
+
+    else:
+        raise ValueError(
+            "region must be a filepath or a list of bounds in the form of [minx, miny, maxx, maxy]."
+        )
+    minx, miny, maxx, maxy = [float(x) for x in bounds]
+    tiles = []
+    left = abs(math.floor(minx))
+    right = abs(math.floor(maxx)) - 1
+    upper = math.ceil(maxy)
+    bottom = math.ceil(miny) - 1
+
+    for y in range(upper, bottom, -1):
+        for x in range(left, right, -1):
+            tile_id = "n{}w{}".format(str(y).zfill(2), str(x).zfill(3))
+            tiles.append(tile_id)
+
+    links = []
+    filepaths = []
+
+    for index, tile in enumerate(tiles):
+        tif_url = f"https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/current/{tile}/USGS_13_{tile}.tif"
+
+        r = requests.head(tif_url)
+        if r.status_code == 200:
+            tif = os.path.join(out_dir, os.path.basename(tif_url))
+            links.append(tif_url)
+            filepaths.append(tif)
+        else:
+            print(f"{tif_url} does not exist.")
+
+    if return_url:
+        return links
+    else:
+        for index, link in enumerate(links):
+            print(f"Downloading {index + 1} of {len(links)}: {os.path.basename(link)}")
+            download_file(link, filepaths[index], **download_args)
+
+
+def mosaic(images, output, merge_args={}, verbose=True, **kwargs):
+    """Mosaics a list of images into a single image. Inspired by https://bit.ly/3A6roDK.
+
+    Args:
+        images (str | list): An input directory containing images or a list of images.
+        output (str): The output image filepath.
+        merge_args (dict, optional): A dictionary of arguments to pass to the rasterio.merge function. Defaults to {}.
+        verbose (bool, optional): Whether to print progress. Defaults to True.
+
+    """
+    from rasterio.merge import merge
+    import rasterio as rio
+    from pathlib import Path
+
+    output = os.path.abspath(output)
+
+    if isinstance(images, str):
+        path = Path(images)
+        raster_files = list(path.iterdir())
+    elif isinstance(images, list):
+        raster_files = images
+    else:
+        raise ValueError("images must be a list of raster files.")
+
+    raster_to_mosiac = []
+
+    if not os.path.exists(os.path.dirname(output)):
+        os.makedirs(os.path.dirname(output))
+
+    for index, p in enumerate(raster_files):
+        if verbose:
+            print(f"Reading {index+1}/{len(raster_files)}: {os.path.basename(p)}")
+        raster = rio.open(p, **kwargs)
+        raster_to_mosiac.append(raster)
+
+    if verbose:
+        print("Merging rasters...")
+    arr, transform = merge(raster_to_mosiac, **merge_args)
+
+    output_meta = raster.meta.copy()
+    output_meta.update(
+        {
+            "driver": "GTiff",
+            "height": arr.shape[1],
+            "width": arr.shape[2],
+            "transform": transform,
+        }
+    )
+
+    with rio.open(output, "w", **output_meta) as m:
+        m.write(arr)
+
+
+def reproject(image, output, dst_crs="EPSG:4326", resampling="nearest", **kwargs):
+    """Reprojects an image.
+
+    Args:
+        image (str): The input image filepath.
+        output (str): The output image filepath.
+        dst_crs (str, optional): The destination CRS. Defaults to "EPSG:4326".
+        resampling (Resampling, optional): The resampling method. Defaults to "nearest".
+        **kwargs: Additional keyword arguments to pass to rasterio.open.
+
+    """
+    import rasterio as rio
+    from rasterio.warp import calculate_default_transform, reproject, Resampling
+
+    if isinstance(resampling, str):
+        resampling = getattr(Resampling, resampling)
+
+    image = os.path.abspath(image)
+    output = os.path.abspath(output)
+
+    if not os.path.exists(os.path.dirname(output)):
+        os.makedirs(os.path.dirname(output))
+
+    with rio.open(image, **kwargs) as src:
+        transform, width, height = calculate_default_transform(
+            src.crs, dst_crs, src.width, src.height, *src.bounds
+        )
+        kwargs = src.meta.copy()
+        kwargs.update(
+            {
+                "crs": dst_crs,
+                "transform": transform,
+                "width": width,
+                "height": height,
+            }
+        )
+
+        with rio.open(output, "w", **kwargs) as dst:
+            for i in range(1, src.count + 1):
+                reproject(
+                    source=rio.band(src, i),
+                    destination=rio.band(dst, i),
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    dst_transform=transform,
+                    dst_crs=dst_crs,
+                    resampling=resampling,
+                    **kwargs,
+                )
+
+
+def download_3dep_lidar(region, filename, scale=1.0, crs="EPSG:3857"):
+    dataset = ee.ImageCollection("USGS/3DEP/1m")
+
+    if isinstance(region, ee.Geometry) or isinstance(region, ee.Feature):
+        region = ee.FeatureCollection([region])
+
+    if isinstance(region, ee.FeatureCollection):
+        image = dataset.filterBounds(region).mosaic().clipToCollection(region)
+
+    download_ee_image(image, filename, region=region.geometry(), scale=scale, crs=crs)
+
+
+def use_mkdocs():
+    """Test if the current notebook is running in mkdocs.
+
+    Returns:
+        bool: True if the notebook is running in mkdocs.
+    """
+    if os.environ.get("USE_MKDOCS") is not None:
+        return True
+    else:
+        return False
+
+
+def create_legend(
+    title="Legend",
+    labels=None,
+    colors=None,
+    legend_dict=None,
+    builtin_legend=None,
+    opacity=1.0,
+    position="bottomright",
+    draggable=True,
+    output=None,
+    style={},
+):
+    """Create a legend in HTML format. Reference: https://bit.ly/3oV6vnH
+
+    Args:
+        title (str, optional): Title of the legend. Defaults to 'Legend'. Defaults to "Legend".
+        colors (list, optional): A list of legend colors. Defaults to None.
+        labels (list, optional): A list of legend labels. Defaults to None.
+        legend_dict (dict, optional): A dictionary containing legend items as keys and color as values.
+            If provided, legend_keys and legend_colors will be ignored. Defaults to None.
+        builtin_legend (str, optional): Name of the builtin legend to add to the map. Defaults to None.
+        opacity (float, optional): The opacity of the legend. Defaults to 1.0.
+        position (str, optional): The position of the legend, can be one of the following:
+            "topleft", "topright", "bottomleft", "bottomright". Defaults to "bottomright".
+        draggable (bool, optional): If True, the legend can be dragged to a new position. Defaults to True.
+        output (str, optional): The output file path (*.html) to save the legend. Defaults to None.
+        style: Additional keyword arguments to style the legend, such as position, bottom, right, z-index,
+            border, background-color, border-radius, padding, font-size, etc. The default style is:
+            style = {
+                'position': 'fixed',
+                'z-index': '9999',
+                'border': '2px solid grey',
+                'background-color': 'rgba(255, 255, 255, 0.8)',
+                'border-radius': '5px',
+                'padding': '10px',
+                'font-size': '14px',
+                'bottom': '20px',
+                'right': '5px'
+            }
+
+    Returns:
+        str: The HTML code of the legend.
+    """
+
+    from .legends import builtin_legends
+
+    pkg_dir = str(importlib.resources.files("geemap").joinpath("geemap.py").parent)
+    legend_template = os.path.join(pkg_dir, "data/template/legend_style.html")
+
+    if draggable:
+        legend_template = os.path.join(pkg_dir, "data/template/legend.txt")
+
+    if not os.path.exists(legend_template):
+        raise FileNotFoundError("The legend template does not exist.")
+
+    if labels is not None:
+        if not isinstance(labels, list):
+            print("The legend keys must be a list.")
+            return
+    else:
+        labels = ["One", "Two", "Three", "Four", "etc"]
+
+    if colors is not None:
+        if not isinstance(colors, list):
+            print("The legend colors must be a list.")
+            return
+        elif all(isinstance(item, tuple) for item in colors):
+            try:
+                colors = [rgb_to_hex(x) for x in colors]
+            except Exception as e:
+                print(e)
+        elif all((item.startswith("#") and len(item) == 7) for item in colors):
+            pass
+        elif all((len(item) == 6) for item in colors):
+            pass
+        else:
+            print("The legend colors must be a list of tuples.")
+            return
+    else:
+        colors = [
+            "#8DD3C7",
+            "#FFFFB3",
+            "#BEBADA",
+            "#FB8072",
+            "#80B1D3",
+        ]
+
+    if len(labels) != len(colors):
+        print("The legend keys and values must be the same length.")
+        return
+
+    allowed_builtin_legends = builtin_legends.keys()
+    if builtin_legend is not None:
+        if builtin_legend not in allowed_builtin_legends:
+            print(
+                "The builtin legend must be one of the following: {}".format(
+                    ", ".join(allowed_builtin_legends)
+                )
+            )
+            return
+        else:
+            legend_dict = builtin_legends[builtin_legend]
+            labels = list(legend_dict.keys())
+            colors = list(legend_dict.values())
+
+    if legend_dict is not None:
+        if not isinstance(legend_dict, dict):
+            print("The legend dict must be a dictionary.")
+            return
+        else:
+            labels = list(legend_dict.keys())
+            colors = list(legend_dict.values())
+            if all(isinstance(item, tuple) for item in colors):
+                try:
+                    colors = [rgb_to_hex(x) for x in colors]
+                except Exception as e:
+                    print(e)
+
+    allowed_positions = [
+        "topleft",
+        "topright",
+        "bottomleft",
+        "bottomright",
+    ]
+    if position not in allowed_positions:
+        raise ValueError(
+            "The position must be one of the following: {}".format(
+                ", ".join(allowed_positions)
+            )
+        )
+
+    if position == "bottomright":
+        if "bottom" not in style:
+            style["bottom"] = "20px"
+        if "right" not in style:
+            style["right"] = "5px"
+        if "left" in style:
+            del style["left"]
+        if "top" in style:
+            del style["top"]
+    elif position == "bottomleft":
+        if "bottom" not in style:
+            style["bottom"] = "5px"
+        if "left" not in style:
+            style["left"] = "5px"
+        if "right" in style:
+            del style["right"]
+        if "top" in style:
+            del style["top"]
+    elif position == "topright":
+        if "top" not in style:
+            style["top"] = "5px"
+        if "right" not in style:
+            style["right"] = "5px"
+        if "left" in style:
+            del style["left"]
+        if "bottom" in style:
+            del style["bottom"]
+    elif position == "topleft":
+        if "top" not in style:
+            style["top"] = "5px"
+        if "left" not in style:
+            style["left"] = "5px"
+        if "right" in style:
+            del style["right"]
+        if "bottom" in style:
+            del style["bottom"]
+
+    if "position" not in style:
+        style["position"] = "fixed"
+    if "z-index" not in style:
+        style["z-index"] = "9999"
+    if "background-color" not in style:
+        style["background-color"] = "rgba(255, 255, 255, 0.8)"
+    if "padding" not in style:
+        style["padding"] = "10px"
+    if "border-radius" not in style:
+        style["border-radius"] = "5px"
+    if "font-size" not in style:
+        style["font-size"] = "14px"
+
+    content = []
+
+    with open(legend_template) as f:
+        lines = f.readlines()
+
+    if draggable:
+        for index, line in enumerate(lines):
+            if index < 36:
+                content.append(line)
+            elif index == 36:
+                line = lines[index].replace("Legend", title)
+                content.append(line)
+            elif index < 39:
+                content.append(line)
+            elif index == 39:
+                for i, color in enumerate(colors):
+                    item = f"    <li><span style='background:{check_color(color)};opacity:{opacity};'></span>{labels[i]}</li>\n"
+                    content.append(item)
+            elif index > 41:
+                content.append(line)
+        content = content[3:-1]
+
+    else:
+        for index, line in enumerate(lines):
+            if index < 8:
+                content.append(line)
+            elif index == 8:
+                for key, value in style.items():
+                    content.append(
+                        "              {}: {};\n".format(key.replace("_", "-"), value)
+                    )
+            elif index < 17:
+                pass
+            elif index < 19:
+                content.append(line)
+            elif index == 19:
+                content.append(line.replace("Legend", title))
+            elif index < 22:
+                content.append(line)
+            elif index == 22:
+                for index, key in enumerate(labels):
+                    color = colors[index]
+                    if not color.startswith("#"):
+                        color = "#" + color
+                    item = "                    <li><span style='background:{};opacity:{};'></span>{}</li>\n".format(
+                        color, opacity, key
+                    )
+                    content.append(item)
+            elif index < 33:
+                pass
+            else:
+                content.append(line)
+
+    legend_text = "".join(content)
+
+    if output is not None:
+        with open(output, "w") as f:
+            f.write(legend_text)
+    else:
+        return legend_text
+
+
+def is_arcpy():
+    """Check if arcpy is available.
+
+    Returns:
+        book: True if arcpy is available, False otherwise.
+    """
+    import sys
+
+    if "arcpy" in sys.modules:
+        return True
+    else:
+        return False
+
+
+def arc_active_map():
+    """Get the active map in ArcGIS Pro.
+
+    Returns:
+        arcpy.Map: The active map in ArcGIS Pro.
+    """
+    if is_arcpy():
+        import arcpy
+
+        aprx = arcpy.mp.ArcGISProject("CURRENT")
+        m = aprx.activeMap
+        return m
+    else:
+        return None
+
+
+def arc_active_view():
+    """Get the active view in ArcGIS Pro.
+
+    Returns:
+        arcpy.MapView: The active view in ArcGIS Pro.
+    """
+    if is_arcpy():
+        import arcpy
+
+        aprx = arcpy.mp.ArcGISProject("CURRENT")
+        view = aprx.activeView
+        return view
+    else:
+        return None
+
+
+def arc_add_layer(url, name=None, shown=True, opacity=1.0):
+    """Add a layer to the active map in ArcGIS Pro.
+
+    Args:
+        url (str): The URL of the tile layer to add.
+        name (str, optional): The name of the layer. Defaults to None.
+        shown (bool, optional): Whether the layer is shown. Defaults to True.
+        opacity (float, optional): The opacity of the layer. Defaults to 1.0.
+    """
+    if is_arcpy():
+        m = arc_active_map()
+        if m is not None:
+            m.addDataFromPath(url)
+            if isinstance(name, str):
+                layers = m.listLayers("Tiled service layer")
+                if len(layers) > 0:
+                    layer = layers[0]
+                    layer.name = name
+                    layer.visible = shown
+                    layer.transparency = 100 - (opacity * 100)
+
+
+def arc_zoom_to_extent(xmin, ymin, xmax, ymax):
+    """Zoom to an extent in ArcGIS Pro.
+
+    Args:
+        xmin (float): The minimum x value of the extent.
+        ymin (float): The minimum y value of the extent.
+        xmax (float): The maximum x value of the extent.
+        ymax (float): The maximum y value of the extent.
+    """
+    if is_arcpy():
+        import arcpy
+
+        view = arc_active_view()
+        if view is not None:
+            view.camera.setExtent(
+                arcpy.Extent(
+                    xmin,
+                    ymin,
+                    xmax,
+                    ymax,
+                    spatial_reference=arcpy.SpatialReference(4326),
+                )
+            )
+
+        # if isinstance(zoom, int):
+        #     scale = 156543.04 * math.cos(0) / math.pow(2, zoom)
+        #     view.camera.scale = scale  # Not working properly
+
+
+def get_current_year():
+    """Get the current year.
+
+    Returns:
+        int: The current year.
+    """
+    today = datetime.date.today()
+    return today.year
+
+
+def html_to_gradio(html, width="100%", height="500px", **kwargs):
+    """Converts the map to an HTML string that can be used in Gradio. Removes unsupported elements, such as
+        attribution and any code blocks containing functions. See https://github.com/gradio-app/gradio/issues/3190
+
+    Args:
+        width (str, optional): The width of the map. Defaults to '100%'.
+        height (str, optional): The height of the map. Defaults to '500px'.
+
+    Returns:
+        str: The HTML string to use in Gradio.
+    """
+
+    if isinstance(width, int):
+        width = f"{width}px"
+
+    if isinstance(height, int):
+        height = f"{height}px"
+
+    if isinstance(html, str):
+        with open(html, "r") as f:
+            lines = f.readlines()
+    elif isinstance(html, list):
+        lines = html
+    else:
+        raise TypeError("html must be a file path or a list of strings")
+
+    output = []
+    skipped_lines = []
+    for index, line in enumerate(lines):
+        if index in skipped_lines:
+            continue
+        if line.lstrip().startswith('{"attribution":'):
+            continue
+        elif "on(L.Draw.Event.CREATED, function(e)" in line:
+            for i in range(14):
+                skipped_lines.append(index + i)
+        elif "L.Control.geocoder" in line:
+            for i in range(5):
+                skipped_lines.append(index + i)
+        elif "function(e)" in line:
+            print(
+                f"Warning: The folium plotting backend does not support functions in code blocks. Please delete line {index + 1}."
+            )
+        else:
+            output.append(line + "\n")
+
+    return f"""<iframe style="width: {width}; height: {height}" name="result" allow="midi; geolocation; microphone; camera;
+    display-capture; encrypted-media;" sandbox="allow-modals allow-forms
+    allow-scripts allow-same-origin allow-popups
+    allow-top-navigation-by-user-activation allow-downloads" allowfullscreen=""
+    allowpaymentrequest="" frameborder="0" srcdoc='{"".join(output)}'></iframe>"""
+
+
+def image_check(image):
+    from localtileserver import TileClient
+
+    if isinstance(image, str):
+        if image.startswith("http") or os.path.exists(image):
+            pass
+        else:
+            raise ValueError("image must be a URL or filepath.")
+    elif isinstance(image, TileClient):
+        pass
+    else:
+        raise ValueError("image must be a URL or filepath.")
+
+
+def image_client(image, **kwargs):
+    """Get a LocalTileserver TileClient from an image.
+
+    Args:
+        image (str): The input image filepath or URL.
+
+    Returns:
+        TileClient: A LocalTileserver TileClient.
+    """
+    image_check(image)
+
+    _, client = get_local_tile_layer(image, return_client=True, **kwargs)
+    return client
+
+
+def image_center(image, **kwargs):
+    """Get the center of an image.
+
+    Args:
+        image (str): The input image filepath or URL.
+
+    Returns:
+        tuple: A tuple of (latitude, longitude).
+    """
+    image_check(image)
+
+    if isinstance(image, str):
+        _, client = get_local_tile_layer(image, return_client=True, **kwargs)
+    else:
+        client = image
+    return client.center()
+
+
+def image_bounds(image, **kwargs):
+    """Get the bounds of an image.
+
+    Args:
+        image (str): The input image filepath or URL.
+
+    Returns:
+        list: A list of bounds in the form of [(south, west), (north, east)].
+    """
+
+    image_check(image)
+    if isinstance(image, str):
+        _, client = get_local_tile_layer(image, return_client=True, **kwargs)
+    else:
+        client = image
+    bounds = client.bounds()
+    return [(bounds[0], bounds[2]), (bounds[1], bounds[3])]
+
+
+def image_metadata(image, **kwargs):
+    """Get the metadata of an image.
+
+    Args:
+        image (str): The input image filepath or URL.
+
+    Returns:
+        dict: A dictionary of image metadata.
+    """
+    image_check(image)
+
+    if isinstance(image, str):
+        _, client = get_local_tile_layer(image, return_client=True, **kwargs)
+    else:
+        client = image
+    return client.metadata()
+
+
+def image_bandcount(image, **kwargs):
+    """Get the number of bands in an image.
+
+    Args:
+        image (str): The input image filepath or URL.
+
+    Returns:
+        int: The number of bands in the image.
+    """
+
+    image_check(image)
+
+    if isinstance(image, str):
+        _, client = get_local_tile_layer(image, return_client=True, **kwargs)
+    else:
+        client = image
+    return len(client.metadata()["bands"])
+
+
+def image_size(image, **kwargs):
+    """Get the size (width, height) of an image.
+
+    Args:
+        image (str): The input image filepath or URL.
+
+    Returns:
+        tuple: A tuple of (width, height).
+    """
+    image_check(image)
+
+    if isinstance(image, str):
+        _, client = get_local_tile_layer(image, return_client=True, **kwargs)
+    else:
+        client = image
+
+    metadata = client.metadata()
+    return metadata["sourceSizeX"], metadata["sourceSizeY"]
+
+
+def image_projection(image, **kwargs):
+    """Get the projection of an image.
+
+    Args:
+        image (str): The input image filepath or URL.
+
+    Returns:
+        str: The projection of the image.
+    """
+    image_check(image)
+
+    if isinstance(image, str):
+        _, client = get_local_tile_layer(image, return_client=True, **kwargs)
+    else:
+        client = image
+    return client.metadata()["Projection"]
+
+
+def image_set_crs(image, epsg):
+    """Define the CRS of an image.
+
+    Args:
+        image (str): The input image filepath
+        epsg (int): The EPSG code of the CRS to set.
+    """
+
+    from rasterio.crs import CRS
+    import rasterio
+
+    with rasterio.open(image, "r+") as rds:
+        rds.crs = CRS.from_epsg(epsg)
+
+
+def image_geotransform(image, **kwargs):
+    """Get the geotransform of an image.
+
+    Args:
+        image (str): The input image filepath or URL.
+
+    Returns:
+        list: A list of geotransform values.
+    """
+    image_check(image)
+
+    if isinstance(image, str):
+        _, client = get_local_tile_layer(image, return_client=True, **kwargs)
+    else:
+        client = image
+    return client.metadata()["GeoTransform"]
+
+
+def image_resolution(image, **kwargs):
+    """Get the resolution of an image.
+
+    Args:
+        image (str): The input image filepath or URL.
+
+    Returns:
+        float: The resolution of the image.
+    """
+    image_check(image)
+
+    if isinstance(image, str):
+        _, client = get_local_tile_layer(image, return_client=True, **kwargs)
+    else:
+        client = image
+    return client.metadata()["GeoTransform"][1]
+
+
+def find_files(input_dir, ext=None, fullpath=True, recursive=True):
+    """Find files in a directory.
+
+    Args:
+        input_dir (str): The input directory.
+        ext (str, optional): The file extension to match. Defaults to None.
+        fullpath (bool, optional): Whether to return the full path. Defaults to True.
+        recursive (bool, optional): Whether to search recursively. Defaults to True.
+
+    Returns:
+        list: A list of matching files.
+    """
+
+    from pathlib import Path
+
+    files = []
+
+    if ext is None:
+        ext = "*"
+    else:
+        ext = ext.replace(".", "")
+
+    ext = f"*.{ext}"
+
+    if recursive:
+        if fullpath:
+            files = [str(path.joinpath()) for path in Path(input_dir).rglob(ext)]
+        else:
+            files = [str(path.name) for path in Path(input_dir).rglob(ext)]
+    else:
+        if fullpath:
+            files = [str(path.joinpath()) for path in Path(input_dir).glob(ext)]
+        else:
+            files = [path.name for path in Path(input_dir).glob(ext)]
+
+    return files
+
+
+def zoom_level_resolution(zoom, latitude=0):
+    """Returns the approximate pixel scale based on zoom level and latutude.
+        See https://blogs.bing.com/maps/2006/02/25/map-control-zoom-levels-gt-resolution
+
+    Args:
+        zoom (int): The zoom level.
+        latitude (float, optional): The latitude. Defaults to 0.
+
+    Returns:
+        float: Map resolution in meters.
+    """
+    import math
+
+    resolution = 156543.04 * math.cos(latitude) / math.pow(2, zoom)
+    return abs(resolution)
+
+
+def lnglat_to_meters(longitude, latitude):
+    """coordinate conversion between lat/lon in decimal degrees to web mercator
+
+    Args:
+        longitude (float): The longitude.
+        latitude (float): The latitude.
+
+    Returns:
+        tuple: A tuple of (x, y) in meters.
+    """
+    import numpy as np
+
+    origin_shift = np.pi * 6378137
+    easting = longitude * origin_shift / 180.0
+    northing = np.log(np.tan((90 + latitude) * np.pi / 360.0)) * origin_shift / np.pi
+
+    if np.isnan(easting):
+        if longitude > 0:
+            easting = 20026376
+        else:
+            easting = -20026376
+
+    if np.isnan(northing):
+        if latitude > 0:
+            northing = 20048966
+        else:
+            northing = -20048966
+
+    return (easting, northing)
+
+
+def meters_to_lnglat(x, y):
+    """coordinate conversion between web mercator to lat/lon in decimal degrees
+
+    Args:
+        x (float): The x coordinate.
+        y (float): The y coordinate.
+
+    Returns:
+        tuple: A tuple of (longitude, latitude) in decimal degrees.
+    """
+    import numpy as np
+
+    origin_shift = np.pi * 6378137
+    longitude = (x / origin_shift) * 180.0
+    latitude = (y / origin_shift) * 180.0
+    latitude = (
+        180 / np.pi * (2 * np.arctan(np.exp(latitude * np.pi / 180.0)) - np.pi / 2.0)
+    )
+    return (longitude, latitude)
+
+
+def bounds_to_xy_range(bounds):
+    """Convert bounds to x and y range to be used as input to bokeh map.
+
+    Args:
+        bounds (list): A list of bounds in the form [(south, west), (north, east)] or [xmin, ymin, xmax, ymax].
+
+    Returns:
+        tuple: A tuple of (x_range, y_range).
+    """
+
+    if isinstance(bounds, tuple):
+        bounds = list(bounds)
+    elif not isinstance(bounds, list):
+        raise TypeError("bounds must be a list")
+
+    if len(bounds) == 4:
+        west, south, east, north = bounds
+    elif len(bounds) == 2:
+        south, west = bounds[0]
+        north, east = bounds[1]
+
+    xmin, ymin = lnglat_to_meters(west, south)
+    xmax, ymax = lnglat_to_meters(east, north)
+    x_range = (xmin, xmax)
+    y_range = (ymin, ymax)
+    return x_range, y_range
+
+
+def center_zoom_to_xy_range(center, zoom):
+    """Convert center and zoom to x and y range to be used as input to bokeh map.
+
+    Args:
+        center (tuple): A tuple of (latitude, longitude).
+        zoom (int): The zoom level.
+
+    Returns:
+        tuple: A tuple of (x_range, y_range).
+    """
+
+    if isinstance(center, tuple) or isinstance(center, list):
+        pass
+    else:
+        raise TypeError("center must be a tuple or list")
+
+    if not isinstance(zoom, int):
+        raise TypeError("zoom must be an integer")
+
+    latitude, longitude = center
+    x_range = (-179, 179)
+    y_range = (-70, 70)
+    x_full_length = x_range[1] - x_range[0]
+    y_full_length = y_range[1] - y_range[0]
+
+    x_length = x_full_length / 2 ** (zoom - 2)
+    y_length = y_full_length / 2 ** (zoom - 2)
+
+    south = latitude - y_length / 2
+    north = latitude + y_length / 2
+    west = longitude - x_length / 2
+    east = longitude + x_length / 2
+
+    xmin, ymin = lnglat_to_meters(west, south)
+    xmax, ymax = lnglat_to_meters(east, north)
+
+    x_range = (xmin, xmax)
+    y_range = (ymin, ymax)
+
+    return x_range, y_range
+
+
+def get_geometry_coords(row, geom, coord_type, shape_type, mercator=False):
+    """
+    Returns the coordinates ('x' or 'y') of edges of a Polygon exterior.
+
+    :param: (GeoPandas Series) row : The row of each of the GeoPandas DataFrame.
+    :param: (str) geom : The column name.
+    :param: (str) coord_type : Whether it's 'x' or 'y' coordinate.
+    :param: (str) shape_type
+    """
+
+    # Parse the exterior of the coordinate
+    if shape_type.lower() in ["polygon", "multipolygon"]:
+        exterior = row[geom].geoms[0].exterior
+        if coord_type == "x":
+            # Get the x coordinates of the exterior
+            coords = list(exterior.coords.xy[0])
+            if mercator:
+                coords = [lnglat_to_meters(x, 0)[0] for x in coords]
+            return coords
+
+        elif coord_type == "y":
+            # Get the y coordinates of the exterior
+            coords = list(exterior.coords.xy[1])
+            if mercator:
+                coords = [lnglat_to_meters(0, y)[1] for y in coords]
+            return coords
+
+    elif shape_type.lower() in ["linestring", "multilinestring"]:
+        if coord_type == "x":
+            coords = list(row[geom].coords.xy[0])
+            if mercator:
+                coords = [lnglat_to_meters(x, 0)[0] for x in coords]
+            return coords
+        elif coord_type == "y":
+            coords = list(row[geom].coords.xy[1])
+            if mercator:
+                coords = [lnglat_to_meters(0, y)[1] for y in coords]
+            return coords
+
+    elif shape_type.lower() in ["point", "multipoint"]:
+        exterior = row[geom]
+
+        if coord_type == "x":
+            # Get the x coordinates of the exterior
+            coords = exterior.coords.xy[0][0]
+            if mercator:
+                coords = lnglat_to_meters(coords, 0)[0]
+            return coords
+
+        elif coord_type == "y":
+            # Get the y coordinates of the exterior
+            coords = exterior.coords.xy[1][0]
+            if mercator:
+                coords = lnglat_to_meters(0, coords)[1]
+            return coords
+
+
+def landsat_scaling(image, thermal_bands=True, apply_fmask=False):
+    """Apply scaling factors to a Landsat image. See an example at
+        https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC09_C02_T1_L2
+
+    Args:
+        image (ee.Image): The input Landsat image.
+        thermal_bands (bool, optional): Whether to apply scaling to thermal bands. Defaults to True.
+        apply_fmask (bool, optional): Whether to apply Fmask cloud mask. Defaults to False.
+
+    Returns:
+        ee.Image: The scaled Landsat image.
+    """
+
+    # Apply the scaling factors to the appropriate bands.
+    opticalBands = image.select("SR_B.").multiply(0.0000275).add(-0.2)
+    if thermal_bands:
+        thermalBands = image.select("ST_B.*").multiply(0.00341802).add(149)
+
+    if apply_fmask:
+        # Replace the original bands with the scaled ones and apply the masks.
+        # Bit 0 - Fill
+        # Bit 1 - Dilated Cloud
+        # Bit 2 - Cirrus
+        # Bit 3 - Cloud
+        # Bit 4 - Cloud Shadow
+        qaMask = image.select("QA_PIXEL").bitwiseAnd(int("11111", 2)).eq(0)
+        if thermal_bands:
+            return (
+                image.addBands(thermalBands, None, True)
+                .addBands(opticalBands, None, True)
+                .updateMask(qaMask)
+            )
+        else:
+            return image.addBands(opticalBands, None, True).updateMask(qaMask)
+
+    else:
+        if thermal_bands:
+            return image.addBands(thermalBands, None, True).addBands(
+                opticalBands, None, True
+            )
+        else:
+            return image.addBands(opticalBands, None, True)
+
+
+def tms_to_geotiff(
+    output,
+    bbox,
+    zoom=None,
+    resolution=None,
+    source="OpenStreetMap",
+    crs="EPSG:3857",
+    to_cog=False,
+    quiet=False,
+    **kwargs,
+):
+    """Download TMS tiles and convert them to a GeoTIFF. The source is adapted from https://github.com/gumblex/tms2geotiff.
+        Credits to the GitHub user @gumblex.
+
+    Args:
+        output (str): The output GeoTIFF file.
+        bbox (list): The bounding box [minx, miny, maxx, maxy], e.g., [-122.5216, 37.733, -122.3661, 37.8095]
+        zoom (int, optional): The map zoom level. Defaults to None.
+        resolution (float, optional): The resolution in meters. Defaults to None.
+        source (str, optional): The tile source. It can be one of the following: "OPENSTREETMAP", "ROADMAP",
+            "SATELLITE", "TERRAIN", "HYBRID", or an HTTP URL. Defaults to "OpenStreetMap".
+        crs (str, optional): The coordinate reference system. Defaults to "EPSG:3857".
+        to_cog (bool, optional): Convert to Cloud Optimized GeoTIFF. Defaults to False.
+        quiet (bool, optional): Suppress output. Defaults to False.
+        **kwargs: Additional arguments to pass to gdal.GetDriverByName("GTiff").Create().
+
+    """
+
+    import io
+    import math
+    import itertools
+    import concurrent.futures
+
+    import numpy
+    from PIL import Image
+
+    from osgeo import gdal, osr
+
+    gdal.UseExceptions()
+
+    try:
+        import httpx
+
+        SESSION = httpx.Client()
+    except ImportError:
+        import requests
+
+        SESSION = requests.Session()
+
+    xyz_tiles = {
+        "OpenStreetMap": {
+            "url": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "attribution": "OpenStreetMap",
+            "name": "OpenStreetMap",
+        },
+        "ROADMAP": {
+            "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+            "attribution": "Esri",
+            "name": "Esri.WorldStreetMap",
+        },
+        "SATELLITE": {
+            "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            "attribution": "Esri",
+            "name": "Esri.WorldImagery",
+        },
+        "TERRAIN": {
+            "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+            "attribution": "Esri",
+            "name": "Esri.WorldTopoMap",
+        },
+        "HYBRID": {
+            "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            "attribution": "Esri",
+            "name": "Esri.WorldImagery",
+        },
+    }
+
+    if isinstance(source, str) and source.upper() in xyz_tiles:
+        source = xyz_tiles[source.upper()]["url"]
+    elif isinstance(source, str) and source.startswith("http"):
+        pass
+    else:
+        raise ValueError(
+            'source must be one of "OpenStreetMap", "ROADMAP", "SATELLITE", "TERRAIN", "HYBRID", or a URL'
+        )
+
+    def resolution_to_zoom_level(resolution):
+        """
+        Convert map resolution in meters to zoom level for Web Mercator (EPSG:3857) tiles.
+        """
+        # Web Mercator tile size in meters at zoom level 0
+        initial_resolution = 156543.03392804097
+
+        # Calculate the zoom level
+        zoom_level = math.log2(initial_resolution / resolution)
+
+        return int(zoom_level)
+
+    if isinstance(bbox, list) and len(bbox) == 4:
+        west, south, east, north = bbox
+    else:
+        raise ValueError(
+            "bbox must be a list of 4 coordinates in the format of [xmin, ymin, xmax, ymax]"
+        )
+
+    if zoom is None and resolution is None:
+        raise ValueError("Either zoom or resolution must be provided")
+    elif zoom is not None and resolution is not None:
+        raise ValueError("Only one of zoom or resolution can be provided")
+
+    if resolution is not None:
+        zoom = resolution_to_zoom_level(resolution)
+
+    EARTH_EQUATORIAL_RADIUS = 6378137.0
+
+    Image.MAX_IMAGE_PIXELS = None
+
+    web_mercator = osr.SpatialReference()
+    web_mercator.ImportFromEPSG(3857)
+
+    WKT_3857 = web_mercator.ExportToWkt()
+
+    def from4326_to3857(lat, lon):
+        xtile = math.radians(lon) * EARTH_EQUATORIAL_RADIUS
+        ytile = (
+            math.log(math.tan(math.radians(45 + lat / 2.0))) * EARTH_EQUATORIAL_RADIUS
+        )
+        return (xtile, ytile)
+
+    def deg2num(lat, lon, zoom):
+        lat_r = math.radians(lat)
+        n = 2**zoom
+        xtile = (lon + 180) / 360 * n
+        ytile = (1 - math.log(math.tan(lat_r) + 1 / math.cos(lat_r)) / math.pi) / 2 * n
+        return (xtile, ytile)
+
+    def is_empty(im):
+        extrema = im.getextrema()
+        if len(extrema) >= 3:
+            if len(extrema) > 3 and extrema[-1] == (0, 0):
+                return True
+            for ext in extrema[:3]:
+                if ext != (0, 0):
+                    return False
+            return True
+        else:
+            return extrema[0] == (0, 0)
+
+    def paste_tile(bigim, base_size, tile, corner_xy, bbox):
+        if tile is None:
+            return bigim
+        im = Image.open(io.BytesIO(tile))
+        mode = "RGB" if im.mode == "RGB" else "RGBA"
+        size = im.size
+        if bigim is None:
+            base_size[0] = size[0]
+            base_size[1] = size[1]
+            newim = Image.new(
+                mode, (size[0] * (bbox[2] - bbox[0]), size[1] * (bbox[3] - bbox[1]))
+            )
+        else:
+            newim = bigim
+
+        dx = abs(corner_xy[0] - bbox[0])
+        dy = abs(corner_xy[1] - bbox[1])
+        xy0 = (size[0] * dx, size[1] * dy)
+        if mode == "RGB":
+            newim.paste(im, xy0)
+        else:
+            if im.mode != mode:
+                im = im.convert(mode)
+            if not is_empty(im):
+                newim.paste(im, xy0)
+        im.close()
+        return newim
+
+    def finish_picture(bigim, base_size, bbox, x0, y0, x1, y1):
+        xfrac = x0 - bbox[0]
+        yfrac = y0 - bbox[1]
+        x2 = round(base_size[0] * xfrac)
+        y2 = round(base_size[1] * yfrac)
+        imgw = round(base_size[0] * (x1 - x0))
+        imgh = round(base_size[1] * (y1 - y0))
+        retim = bigim.crop((x2, y2, x2 + imgw, y2 + imgh))
+        if retim.mode == "RGBA" and retim.getextrema()[3] == (255, 255):
+            retim = retim.convert("RGB")
+        bigim.close()
+        return retim
+
+    def get_tile(url):
+        retry = 3
+        while 1:
+            try:
+                r = SESSION.get(url, timeout=60)
+                break
+            except Exception:
+                retry -= 1
+                if not retry:
+                    raise
+        if r.status_code == 404:
+            return None
+        elif not r.content:
+            return None
+        r.raise_for_status()
+        return r.content
+
+    def draw_tile(
+        source, lat0, lon0, lat1, lon1, zoom, filename, quiet=False, **kwargs
+    ):
+        x0, y0 = deg2num(lat0, lon0, zoom)
+        x1, y1 = deg2num(lat1, lon1, zoom)
+        x0, x1 = sorted([x0, x1])
+        y0, y1 = sorted([y0, y1])
+        corners = tuple(
+            itertools.product(
+                range(math.floor(x0), math.ceil(x1)),
+                range(math.floor(y0), math.ceil(y1)),
+            )
+        )
+        totalnum = len(corners)
+        futures = []
+        with concurrent.futures.ThreadPoolExecutor(5) as executor:
+            for x, y in corners:
+                futures.append(
+                    executor.submit(get_tile, source.format(z=zoom, x=x, y=y))
+                )
+            bbox = (math.floor(x0), math.floor(y0), math.ceil(x1), math.ceil(y1))
+            bigim = None
+            base_size = [256, 256]
+            for k, (fut, corner_xy) in enumerate(zip(futures, corners), 1):
+                bigim = paste_tile(bigim, base_size, fut.result(), corner_xy, bbox)
+                if not quiet:
+                    print("Downloaded image %d/%d" % (k, totalnum))
+
+        if not quiet:
+            print("Saving GeoTIFF. Please wait...")
+        img = finish_picture(bigim, base_size, bbox, x0, y0, x1, y1)
+        imgbands = len(img.getbands())
+        driver = gdal.GetDriverByName("GTiff")
+
+        if "options" not in kwargs:
+            kwargs["options"] = [
+                "COMPRESS=DEFLATE",
+                "PREDICTOR=2",
+                "ZLEVEL=9",
+                "TILED=YES",
+            ]
+
+        gtiff = driver.Create(
+            filename,
+            img.size[0],
+            img.size[1],
+            imgbands,
+            gdal.GDT_Byte,
+            **kwargs,
+        )
+        xp0, yp0 = from4326_to3857(lat0, lon0)
+        xp1, yp1 = from4326_to3857(lat1, lon1)
+        pwidth = abs(xp1 - xp0) / img.size[0]
+        pheight = abs(yp1 - yp0) / img.size[1]
+        gtiff.SetGeoTransform((min(xp0, xp1), pwidth, 0, max(yp0, yp1), 0, -pheight))
+        gtiff.SetProjection(WKT_3857)
+        for band in range(imgbands):
+            array = numpy.array(img.getdata(band), dtype="u8")
+            array = array.reshape((img.size[1], img.size[0]))
+            band = gtiff.GetRasterBand(band + 1)
+            band.WriteArray(array)
+        gtiff.FlushCache()
+
+        if not quiet:
+            print(f"Image saved to {filename}")
+        return img
+
+    try:
+        draw_tile(source, south, west, north, east, zoom, output, quiet, **kwargs)
+        if crs.upper() != "EPSG:3857":
+            reproject(output, output, crs, to_cog=to_cog)
+        elif to_cog:
+            image_to_cog(output, output)
+    except Exception as e:
+        raise Exception(e)
+
+
+def tif_to_jp2(filename, output, creationOptions=None):
+    """Converts a GeoTIFF to JPEG2000.
+
+    Args:
+        filename (str): The path to the GeoTIFF file.
+        output (str): The path to the output JPEG2000 file.
+        creationOptions (list): A list of creation options for the JPEG2000 file. See
+            https://gdal.org/drivers/raster/jp2openjpeg.html. For example, to specify the compression
+            ratio, use ``["QUALITY=20"]``. A value of 20 means the file will be 20% of the size in comparison
+            to uncompressed data.
+
+    """
+
+    from osgeo import gdal
+
+    gdal.UseExceptions()
+
+    if not os.path.exists(filename):
+        raise Exception(f"File {filename} does not exist")
+
+    if not output.endswith(".jp2"):
+        output += ".jp2"
+
+    in_ds = gdal.Open(filename)
+    gdal.Translate(output, in_ds, format="JP2OpenJPEG", creationOptions=creationOptions)
+    in_ds = None
+
+
+def ee_to_geotiff(
+    ee_object,
+    output,
+    bbox=None,
+    vis_params={},
+    zoom=None,
+    resolution=None,
+    crs="EPSG:3857",
+    to_cog=False,
+    quiet=False,
+    **kwargs,
+):
+    """Downloads an Earth Engine object as GeoTIFF.
+
+    Args:
+        ee_object (ee.Image | ee.FeatureCollection): The Earth Engine object to download.
+        output (str): The output path for the GeoTIFF.
+        bbox (str, optional): The bounding box in the format [xmin, ymin, xmax, ymax]. Defaults to None,
+            which is the bounding box of the Earth Engine object.
+        vis_params (dict, optional): Visualization parameters. Defaults to {}.
+        zoom (int, optional): The zoom level to download the image at. Defaults to None.
+        resolution (float, optional): The resolution in meters to download the image at. Defaults to None.
+        crs (str, optional): The CRS of the output image. Defaults to "EPSG:3857".
+        to_cog (bool, optional): Whether to convert the image to Cloud Optimized GeoTIFF. Defaults to False.
+        quiet (bool, optional): Whether to hide the download progress bar. Defaults to False.
+
+    """
+
+    from box import Box
+
+    image = None
+
+    if (
+        not isinstance(ee_object, ee.Image)
+        and not isinstance(ee_object, ee.ImageCollection)
+        and not isinstance(ee_object, ee.FeatureCollection)
+        and not isinstance(ee_object, ee.Feature)
+        and not isinstance(ee_object, ee.Geometry)
+    ):
+        err_str = "\n\nThe image argument in 'addLayer' function must be an instance of one of ee.Image, ee.Geometry, ee.Feature or ee.FeatureCollection."
+        raise AttributeError(err_str)
+
+    if (
+        isinstance(ee_object, ee.geometry.Geometry)
+        or isinstance(ee_object, ee.feature.Feature)
+        or isinstance(ee_object, ee.featurecollection.FeatureCollection)
+    ):
+        features = ee.FeatureCollection(ee_object)
+
+        width = 2
+
+        if "width" in vis_params:
+            width = vis_params["width"]
+
+        color = "000000"
+
+        if "color" in vis_params:
+            color = vis_params["color"]
+
+        image_fill = features.style(**{"fillColor": color}).updateMask(
+            ee.Image.constant(0.5)
+        )
+        image_outline = features.style(
+            **{"color": color, "fillColor": "00000000", "width": width}
+        )
+
+        image = image_fill.blend(image_outline)
+    elif isinstance(ee_object, ee.image.Image):
+        image = ee_object
+    elif isinstance(ee_object, ee.imagecollection.ImageCollection):
+        image = ee_object.mosaic()
+
+    if "palette" in vis_params:
+        if isinstance(vis_params["palette"], Box):
+            try:
+                vis_params["palette"] = vis_params["palette"]["default"]
+            except Exception as e:
+                print("The provided palette is invalid.")
+                raise Exception(e)
+        elif isinstance(vis_params["palette"], str):
+            vis_params["palette"] = check_cmap(vis_params["palette"])
+        elif not isinstance(vis_params["palette"], list):
+            raise ValueError(
+                "The palette must be a list of colors or a string or a Box object."
+            )
+
+    map_id_dict = ee.Image(image).getMapId(vis_params)
+    url = map_id_dict["tile_fetcher"].url_format
+
+    if bbox is None:
+        bbox = ee_to_bbox(image)
+
+    if zoom is None and resolution is None:
+        raise ValueError("Either zoom level or resolution must be specified.")
+
+    tms_to_geotiff(output, bbox, zoom, resolution, url, crs, to_cog, quiet, **kwargs)
+
+
+def create_grid(ee_object, scale, proj=None):
+    """Create a grid covering an Earth Engine object.
+
+    Args:
+        ee_object (ee.Image | ee.Geometry | ee.FeatureCollection): The Earth Engine object.
+        scale (float): The grid cell size.
+        proj (str, optional): The projection. Defaults to None.
+
+
+    Returns:
+        ee.FeatureCollection: The grid as a feature collection.
+    """
+
+    if isinstance(ee_object, ee.FeatureCollection) or isinstance(ee_object, ee.Image):
+        geometry = ee_object.geometry()
+    elif isinstance(ee_object, ee.Geometry):
+        geometry = ee_object
+    else:
+        raise ValueError(
+            "ee_object must be an ee.FeatureCollection, ee.Image, or ee.Geometry"
+        )
+
+    if proj is None:
+        proj = geometry.projection()
+
+    grid = geometry.coveringGrid(proj, scale)
+
+    return grid
+
+
+def jslink_slider_label(slider, label):
+    """Link a slider and a label.
+
+    Args:
+        slider (ipywidgets.IntSlider | ipywidgets.FloatSlider): The slider.
+        label (ipywidgets.Label): The label.
+    """
+
+    def update_label(change):
+        if change["name"]:
+            label.value = str(change["new"])
+
+    slider.observe(update_label, "value")
+
+
+def check_basemap(basemap):
+    """Check Google basemaps
+
+    Args:
+        basemap (str): The basemap name.
+
+    Returns:
+        str: The basemap name.
+    """
+    if isinstance(basemap, str):
+        map_dict = {
+            "ROADMAP": "Google Maps",
+            "SATELLITE": "Google Satellite",
+            "TERRAIN": "Google Terrain",
+            "HYBRID": "Google Hybrid",
+        }
+
+        if basemap.upper() in map_dict.keys():
+            return map_dict[basemap.upper()]
+        else:
+            return basemap
+    else:
+        return basemap
+
+
+def get_ee_token():
+    """Get Earth Engine token.
+
+    Returns:
+        dict: The Earth Engine token.
+    """
+    credential_file_path = os.path.expanduser("~/.config/earthengine/credentials")
+
+    if os.path.exists(credential_file_path):
+        with open(credential_file_path, "r") as f:
+            credentials = json.load(f)
+            return credentials
+    else:
+        print("Earth Engine credentials not found. Please run ee.Authenticate()")
+        return None
+
+
+def geotiff_to_image(image: str, output: str) -> None:
+    """
+    Converts a GeoTIFF file to a JPEG/PNG image.
+
+    Args:
+        image (str): The path to the input GeoTIFF file.
+        output (str): The path to save the output JPEG/PNG file.
+
+    Returns:
+        None
+    """
+
+    import rasterio
+    from PIL import Image
+
+    # Open the GeoTIFF file
+    with rasterio.open(image) as dataset:
+        # Read the image data
+        data = dataset.read()
+
+        # Convert the image data to 8-bit format (assuming it's not already)
+        if dataset.dtypes[0] != "uint8":
+            data = (data / data.max() * 255).astype("uint8")
+
+        # Convert the image data to RGB format if it's a single band image
+        if dataset.count == 1:
+            data = data.squeeze()
+            data = data.reshape((1, data.shape[0], data.shape[1]))
+            data = data.repeat(3, axis=0)
+
+        # Create a PIL Image object from the image data
+        image = Image.fromarray(data.transpose(1, 2, 0))
+
+        # Save the image as a JPEG file
+        image.save(output)
+
+
+def xee_to_image(
+    xds,
+    filenames: Optional[Union[str, List[str]]] = None,
+    out_dir: Optional[str] = None,
+    crs: Optional[str] = None,
+    nodata: Optional[float] = None,
+    driver: str = "COG",
+    time_unit: str = "D",
+    quiet: bool = False,
+    **kwargs,
+) -> None:
+    """
+    Convert xarray Dataset to georeferenced images.
+
+    Args:
+        xds (xr.Dataset): The xarray Dataset to convert to images.
+        filenames (Union[str, List[str]], optional): Output filenames for the images.
+            If a single string is provided, it will be used as the filename for all images.
+            If a list of strings is provided, the filenames will be used in order. Defaults to None.
+        out_dir (str, optional): Output directory for the images. Defaults to current working directory.
+        crs (str, optional): Coordinate reference system (CRS) of the output images.
+            If not provided, the CRS is inferred from the Dataset's attributes ('crs' attribute) or set to 'EPSG:4326'.
+        nodata (float, optional): The nodata value used for the output images. Defaults to None.
+        driver (str, optional): Driver used for writing the output images, such as 'GTiff'. Defaults to "COG".
+        time_unit (str, optional): Time unit used for generating default filenames. Defaults to 'D'.
+        quiet (bool, optional): If True, suppresses progress messages. Defaults to False.
+        **kwargs: Additional keyword arguments passed to rioxarray's `rio.to_raster()` function.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If the number of filenames doesn't match the number of time steps in the Dataset.
+
+    """
+    import numpy as np
+
+    try:
+        import rioxarray
+    except ImportError:
+        install_package("rioxarray")
+        import rioxarray
+
+    if crs is None and "crs" in xds.attrs:
+        crs = xds.attrs["crs"]
+    if crs is None:
+        crs = "EPSG:4326"
+
+    if out_dir is None:
+        out_dir = os.getcwd()
+
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    if isinstance(filenames, str):
+        filenames = [filenames]
+    if isinstance(filenames, list):
+        if len(filenames) != len(xds.time):
+            raise ValueError(
+                "The number of filenames must match the number of time steps"
+            )
+
+    coords = [coord for coord in xds.coords]
+    x_dim = coords[1]
+    y_dim = coords[2]
+
+    for index, time in enumerate(xds.time.values):
+        if nodata is not None:
+            # Create a Boolean mask where all three variables are zero (nodata)
+            mask = (xds == nodata).all(dim="time")
+            # Set nodata values based on the mask for all variables
+            xds = xds.where(~mask, other=np.nan)
+
+        if not quiet:
+            print(f"Processing {index + 1}/{len(xds.time.values)}: {time}")
+        image = xds.sel(time=time)
+        # transform the image to suit rioxarray format
+        image = (
+            image.rename({y_dim: "y", x_dim: "x"})
+            .transpose("y", "x")
+            .rio.write_crs(crs)
+        )
+
+        if filenames is None:
+            date = np.datetime_as_string(time, unit=time_unit)
+            filename = f"{date}.tif"
+        else:
+            filename = filenames.pop()
+
+        output_path = os.path.join(out_dir, filename)
+        image.rio.to_raster(output_path, driver=driver, **kwargs)
+
+
+def array_to_memory_file(
+    array,
+    source: str = None,
+    dtype: str = None,
+    compress: str = "deflate",
+    transpose: bool = True,
+    cellsize: float = None,
+    crs: str = None,
+    transform: tuple = None,
+    driver="COG",
+    **kwargs,
+):
+    """Convert a NumPy array to a memory file.
+
+    Args:
+        array (numpy.ndarray): The input NumPy array.
+        source (str, optional): Path to the source file to extract metadata from. Defaults to None.
+        dtype (str, optional): The desired data type of the array. Defaults to None.
+        compress (str, optional): The compression method for the output file. Defaults to "deflate".
+        transpose (bool, optional): Whether to transpose the array from (bands, rows, columns) to (rows, columns, bands). Defaults to True.
+        cellsize (float, optional): The cell size of the array if source is not provided. Defaults to None.
+        crs (str, optional): The coordinate reference system of the array if source is not provided. Defaults to None.
+        transform (tuple, optional): The affine transformation matrix if source is not provided. Defaults to None.
+        driver (str, optional): The driver to use for creating the output file, such as 'GTiff'. Defaults to "COG".
+        **kwargs: Additional keyword arguments to be passed to the rasterio.open() function.
+
+    Returns:
+        rasterio.DatasetReader: The rasterio dataset reader object for the converted array.
+    """
+    import rasterio
+    import numpy as np
+    import xarray as xr
+
+    if isinstance(array, xr.DataArray):
+        coords = [coord for coord in array.coords]
+        if coords[0] == "time":
+            x_dim = coords[1]
+            y_dim = coords[2]
+            if array.dims[0] == "time":
+                array = array.isel(time=0)
+
+            array = array.rename({y_dim: "y", x_dim: "x"}).transpose("y", "x")
+        array = array.values
+
+    if array.ndim == 3 and transpose:
+        array = np.transpose(array, (1, 2, 0))
+
+    if source is not None:
+        with rasterio.open(source) as src:
+            crs = src.crs
+            transform = src.transform
+            if compress is None:
+                compress = src.compression
+    else:
+        if cellsize is None:
+            raise ValueError("cellsize must be provided if source is not provided")
+        if crs is None:
+            raise ValueError(
+                "crs must be provided if source is not provided, such as EPSG:3857"
+            )
+
+        if "transform" not in kwargs:
+            # Define the geotransformation parameters
+            xmin, ymin, xmax, ymax = (
+                0,
+                0,
+                cellsize * array.shape[1],
+                cellsize * array.shape[0],
+            )
+            # (west, south, east, north, width, height)
+            transform = rasterio.transform.from_bounds(
+                xmin, ymin, xmax, ymax, array.shape[1], array.shape[0]
+            )
+        else:
+            transform = kwargs["transform"]
+
+    if dtype is None:
+        # Determine the minimum and maximum values in the array
+        min_value = np.min(array)
+        max_value = np.max(array)
+        # Determine the best dtype for the array
+        if min_value >= 0 and max_value <= 1:
+            dtype = np.float32
+        elif min_value >= 0 and max_value <= 255:
+            dtype = np.uint8
+        elif min_value >= -128 and max_value <= 127:
+            dtype = np.int8
+        elif min_value >= 0 and max_value <= 65535:
+            dtype = np.uint16
+        elif min_value >= -32768 and max_value <= 32767:
+            dtype = np.int16
+        else:
+            dtype = np.float64
+
+    # Convert the array to the best dtype
+    array = array.astype(dtype)
+
+    # Define the GeoTIFF metadata
+    metadata = {
+        "driver": driver,
+        "height": array.shape[0],
+        "width": array.shape[1],
+        "dtype": array.dtype,
+        "crs": crs,
+        "transform": transform,
+    }
+
+    if array.ndim == 2:
+        metadata["count"] = 1
+    elif array.ndim == 3:
+        metadata["count"] = array.shape[2]
+    if compress is not None:
+        metadata["compress"] = compress
+
+    metadata.update(**kwargs)
+
+    # Create a new memory file and write the array to it
+    memory_file = rasterio.MemoryFile()
+    dst = memory_file.open(**metadata)
+
+    if array.ndim == 2:
+        dst.write(array, 1)
+    elif array.ndim == 3:
+        for i in range(array.shape[2]):
+            dst.write(array[:, :, i], i + 1)
+
+    dst.close()
+
+    # Read the dataset from memory
+    dataset_reader = rasterio.open(dst.name, mode="r")
+
+    return dataset_reader
+
+
+def array_to_image(
+    array,
+    output: str = None,
+    source: str = None,
+    dtype: str = None,
+    compress: str = "deflate",
+    transpose: bool = True,
+    cellsize: float = None,
+    crs: str = None,
+    driver: str = "COG",
+    **kwargs,
+) -> str:
+    """Save a NumPy array as a GeoTIFF using the projection information from an existing GeoTIFF file.
+
+    Args:
+        array (np.ndarray): The NumPy array to be saved as a GeoTIFF.
+        output (str): The path to the output image. If None, a temporary file will be created. Defaults to None.
+        source (str, optional): The path to an existing GeoTIFF file with map projection information. Defaults to None.
+        dtype (np.dtype, optional): The data type of the output array. Defaults to None.
+        compress (str, optional): The compression method. Can be one of the following: "deflate", "lzw", "packbits", "jpeg". Defaults to "deflate".
+        transpose (bool, optional): Whether to transpose the array from (bands, rows, columns) to (rows, columns, bands). Defaults to True.
+        cellsize (float, optional): The resolution of the output image in meters. Defaults to None.
+        crs (str, optional): The CRS of the output image. Defaults to None.
+        driver (str, optional): The driver to use for creating the output file, such as 'GTiff'. Defaults to "COG".
+        **kwargs: Additional keyword arguments to be passed to the rasterio.open() function.
+    """
+
+    import numpy as np
+    import rasterio
+    import xarray as xr
+
+    if output is None:
+        return array_to_memory_file(
+            array, source, dtype, compress, transpose, cellsize, crs, driver, **kwargs
+        )
+
+    if isinstance(array, xr.DataArray):
+        coords = [coord for coord in array.coords]
+        if coords[0] == "time":
+            x_dim = coords[1]
+            y_dim = coords[2]
+            if array.dims[0] == "time":
+                array = array.isel(time=0)
+
+            array = array.rename({y_dim: "y", x_dim: "x"}).transpose("y", "x")
+        array = array.values
+
+    if array.ndim == 3 and transpose:
+        array = np.transpose(array, (1, 2, 0))
+
+    out_dir = os.path.dirname(os.path.abspath(output))
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    if not output.endswith(".tif"):
+        output += ".tif"
+
+    if source is not None:
+        with rasterio.open(source) as src:
+            crs = src.crs
+            transform = src.transform
+            if compress is None:
+                compress = src.compression
+    else:
+        if cellsize is None:
+            raise ValueError("resolution must be provided if source is not provided")
+        if crs is None:
+            raise ValueError(
+                "crs must be provided if source is not provided, such as EPSG:3857"
+            )
+
+        if "transform" not in kwargs:
+            # Define the geotransformation parameters
+            xmin, ymin, xmax, ymax = (
+                0,
+                0,
+                cellsize * array.shape[1],
+                cellsize * array.shape[0],
+            )
+            transform = rasterio.transform.from_bounds(
+                xmin, ymin, xmax, ymax, array.shape[1], array.shape[0]
+            )
+        else:
+            transform = kwargs["transform"]
+
+    if dtype is None:
+        # Determine the minimum and maximum values in the array
+        min_value = np.min(array)
+        max_value = np.max(array)
+        # Determine the best dtype for the array
+        if min_value >= 0 and max_value <= 1:
+            dtype = np.float32
+        elif min_value >= 0 and max_value <= 255:
+            dtype = np.uint8
+        elif min_value >= -128 and max_value <= 127:
+            dtype = np.int8
+        elif min_value >= 0 and max_value <= 65535:
+            dtype = np.uint16
+        elif min_value >= -32768 and max_value <= 32767:
+            dtype = np.int16
+        else:
+            dtype = np.float64
+
+    # Convert the array to the best dtype
+    array = array.astype(dtype)
+
+    # Define the GeoTIFF metadata
+    metadata = {
+        "driver": driver,
+        "height": array.shape[0],
+        "width": array.shape[1],
+        "dtype": array.dtype,
+        "crs": crs,
+        "transform": transform,
+    }
+
+    if array.ndim == 2:
+        metadata["count"] = 1
+    elif array.ndim == 3:
+        metadata["count"] = array.shape[2]
+    if compress is not None:
+        metadata["compress"] = compress
+
+    metadata.update(**kwargs)
+
+    # Create a new GeoTIFF file and write the array to it
+    with rasterio.open(output, "w", **metadata) as dst:
+        if array.ndim == 2:
+            dst.write(array, 1)
+        elif array.ndim == 3:
+            for i in range(array.shape[2]):
+                dst.write(array[:, :, i], i + 1)
+
+
+def is_studio_lab():
+    """Check if the current notebook is running on Studio Lab.
+
+    Returns:
+        bool: True if the notebook is running on Studio Lab.
+    """
+
+    import psutil
+
+    output = psutil.Process().parent().cmdline()
+
+    on_studio_lab = False
+    for item in output:
+        if "studiolab/bin" in item:
+            on_studio_lab = True
+    return on_studio_lab
+
+
+def is_on_aws():
+    """Check if the current notebook is running on AWS.
+
+    Returns:
+        bool: True if the notebook is running on AWS.
+    """
+
+    import psutil
+
+    output = psutil.Process().parent().cmdline()
+
+    on_aws = False
+    for item in output:
+        if item.endswith(".aws") or "ec2-user" in item:
+            on_aws = True
+    return on_aws
+
+
+def xarray_to_raster(dataset, filename: str, **kwargs: Dict[str, Any]) -> None:
+    """Convert an xarray Dataset to a raster file.
+
+    Args:
+        dataset (xr.Dataset): The input xarray Dataset to be converted.
+        filename (str): The output filename for the raster file.
+        **kwargs (Dict[str, Any]): Additional keyword arguments passed to the `rio.to_raster()` method.
+            See https://corteva.github.io/rioxarray/stable/examples/convert_to_raster.html for more info.
+
+    Returns:
+        None
+    """
+    import rioxarray
+
+    dims = list(dataset.dims)
+
+    new_names = {}
+
+    if "lat" in dims:
+        new_names["lat"] = "y"
+        dims.remove("lat")
+    if "lon" in dims:
+        new_names["lon"] = "x"
+        dims.remove("lon")
+    if "lng" in dims:
+        new_names["lng"] = "x"
+        dims.remove("lng")
+    if "latitude" in dims:
+        new_names["latitude"] = "y"
+        dims.remove("latitude")
+    if "longitude" in dims:
+        new_names["longitude"] = "x"
+        dims.remove("longitude")
+
+    dataset = dataset.rename(new_names)
+    dataset.transpose(..., "y", "x").rio.to_raster(filename, **kwargs)
+
+
+def hex_to_rgba(hex_color: str, opacity: float) -> str:
+    """
+    Converts a hex color code to an RGBA color string.
+
+    Args:
+        hex_color (str): The hex color code to convert. It can be in the format
+            '#RRGGBB' or 'RRGGBB'.
+        opacity (float): The opacity value for the RGBA color. It should be a
+            float between 0.0 (completely transparent) and 1.0 (completely opaque).
+
+    Returns:
+        str: The RGBA color string in the format 'rgba(R, G, B, A)'.
+    """
+    hex_color = hex_color.lstrip("#")
+    h_len = len(hex_color)
+    r, g, b = (
+        int(hex_color[i : i + h_len // 3], 16) for i in range(0, h_len, h_len // 3)
+    )
+    return f"rgba({r},{g},{b},{opacity})"
+
+
+def replace_top_level_hyphens(d: Union[Dict, Any]) -> Union[Dict, Any]:
+    """
+    Replaces hyphens with underscores in top-level dictionary keys.
+
+    Args:
+        d (Union[Dict, Any]): The input dictionary or any other data type.
+
+    Returns:
+        Union[Dict, Any]: The modified dictionary with top-level keys having hyphens replaced with underscores,
+        or the original input if it's not a dictionary.
+    """
+    if isinstance(d, dict):
+        return {k.replace("-", "_"): v for k, v in d.items()}
+    return d
+
+
+def replace_hyphens_in_keys(d: Union[Dict, List, Any]) -> Union[Dict, List, Any]:
+    """
+    Recursively replaces hyphens with underscores in dictionary keys.
+
+    Args:
+        d (Union[Dict, List, Any]): The input dictionary, list or any other data type.
+
+    Returns:
+        Union[Dict, List, Any]: The modified dictionary or list with keys having hyphens replaced with underscores,
+        or the original input if it's not a dictionary or list.
+    """
+    if isinstance(d, dict):
+        return {k.replace("-", "_"): replace_hyphens_in_keys(v) for k, v in d.items()}
+    elif isinstance(d, list):
+        return [replace_hyphens_in_keys(i) for i in d]
+    else:
+        return d
+
+
+def remove_port_from_string(data: str) -> str:
+    """
+    Removes the port number from all URLs in the given string.
+
+    Args::
+        data (str): The input string containing URLs.
+
+    Returns:
+        str: The string with port numbers removed from all URLs.
+    """
+    import re
+
+    # Regular expression to match URLs with port numbers
+    url_with_port_pattern = re.compile(r"(http://[\d\w.]+):\d+")
+
+    # Function to remove the port from the matched URLs
+    def remove_port(match):
+        return match.group(1)
+
+    # Substitute the URLs with ports removed
+    result = url_with_port_pattern.sub(remove_port, data)
+
+    return result
+
+
+def pmtiles_metadata(input_file: str) -> Dict[str, Union[str, int, List[str]]]:
+    """
+    Fetch the metadata from a local or remote .pmtiles file.
+
+    This function retrieves metadata from a PMTiles file, whether it's local or hosted remotely.
+    If it's remote, the function fetches the header to determine the range of bytes to download
+    for obtaining the metadata. It then reads the metadata and extracts the layer names.
+
+    Args:
+        input_file (str): Path to the .pmtiles file, or its URL if the file is hosted remotely.
+
+    Returns:
+        dict: A dictionary containing the metadata information, including layer names.
+
+    Raises:
+        ImportError: If the pmtiles library is not installed.
+        ValueError: If the input file is not a .pmtiles file or if it does not exist.
+
+    Example:
+        >>> metadata = pmtiles_metadata("https://example.com/path/to/tiles.pmtiles")
+        >>> print(metadata["layer_names"])
+        ['buildings', 'roads']
+
+    Note:
+        If fetching a remote PMTiles file, this function may perform multiple requests to minimize
+        the amount of data downloaded.
+    """
+
+    import json
+    import requests
+    from urllib.parse import urlparse
+
+    try:
+        from pmtiles.reader import Reader, MmapSource, MemorySource
+    except ImportError:
+        print(
+            "pmtiles is not installed. Please install it using `pip install pmtiles`."
+        )
+        return
+
+    # ignore uri parameters when checking file suffix
+    if not urlparse(input_file).path.endswith(".pmtiles"):
+        raise ValueError("Input file must be a .pmtiles file.")
+
+    header = pmtiles_header(input_file)
+    metadata_offset = header["metadata_offset"]
+    metadata_length = header["metadata_length"]
+
+    if input_file.startswith("http"):
+        headers = {"Range": f"bytes=0-{metadata_offset + metadata_length}"}
+        response = requests.get(input_file, headers=headers)
+        content = MemorySource(response.content)
+        metadata = Reader(content).metadata()
+    else:
+        with open(input_file, "rb") as f:
+            reader = Reader(MmapSource(f))
+            metadata = reader.metadata()
+            if "json" in metadata:
+                metadata["vector_layers"] = json.loads(metadata["json"])[
+                    "vector_layers"
+                ]
+
+    vector_layers = metadata["vector_layers"]
+    layer_names = [layer["id"] for layer in vector_layers]
+
+    if "tilestats" in metadata:
+        geometries = [layer["geometry"] for layer in metadata["tilestats"]["layers"]]
+        metadata["geometries"] = geometries
+
+    metadata["layer_names"] = layer_names
+    metadata["center"] = header["center"]
+    metadata["bounds"] = header["bounds"]
+    return metadata
+
+
+def pmtiles_style(
+    url: str,
+    layers: Optional[Union[str, List[str]]] = None,
+    cmap: str = "Set3",
+    n_class: Optional[int] = None,
+    opacity: float = 0.5,
+    circle_radius: int = 5,
+    line_width: int = 1,
+    attribution: str = "PMTiles",
+    **kwargs,
+):
+    """
+    Generates a Mapbox style JSON for rendering PMTiles data.
+
+    Args:
+        url (str): The URL of the PMTiles file.
+        layers (str or list[str], optional): The layers to include in the style. If None, all layers will be included.
+            Defaults to None.
+        cmap (str, optional): The color map to use for styling the layers. Defaults to "Set3".
+        n_class (int, optional): The number of classes to use for styling. If None, the number of classes will be
+            determined automatically based on the color map. Defaults to None.
+        opacity (float, optional): The fill opacity for polygon layers. Defaults to 0.5.
+        circle_radius (int, optional): The circle radius for point layers. Defaults to 5.
+        line_width (int, optional): The line width for line layers. Defaults to 1.
+        attribution (str, optional): The attribution text for the data source. Defaults to "PMTiles".
+
+    Returns:
+        dict: The Mapbox style JSON.
+
+    Raises:
+        ValueError: If the layers argument is not a string or a list.
+        ValueError: If a layer specified in the layers argument does not exist in the PMTiles file.
+    """
+
+    if cmap == "Set3":
+        palette = [
+            "#8dd3c7",
+            "#ffffb3",
+            "#bebada",
+            "#fb8072",
+            "#80b1d3",
+            "#fdb462",
+            "#b3de69",
+            "#fccde5",
+            "#d9d9d9",
+            "#bc80bd",
+            "#ccebc5",
+            "#ffed6f",
+        ]
+    elif isinstance(cmap, list):
+        palette = cmap
+    else:
+        from .colormaps import get_palette
+
+        palette = ["#" + c for c in get_palette(cmap, n_class)]
+
+    n_class = len(palette)
+
+    metadata = pmtiles_metadata(url)
+    layer_names = metadata["layer_names"]
+
+    style = {
+        "version": 8,
+        "sources": {
+            "source": {
+                "type": "vector",
+                "url": "pmtiles://" + url,
+                "attribution": attribution,
+            }
+        },
+        "layers": [],
+    }
+
+    if layers is None:
+        layers = layer_names
+    elif isinstance(layers, str):
+        layers = [layers]
+    elif isinstance(layers, list):
+        for layer in layers:
+            if layer not in layer_names:
+                raise ValueError(f"Layer {layer} does not exist in the PMTiles file.")
+    else:
+        raise ValueError("The layers argument must be a string or a list.")
+
+    for i, layer_name in enumerate(layers):
+        layer_point = {
+            "id": f"{layer_name}_point",
+            "source": "source",
+            "source-layer": layer_name,
+            "type": "circle",
+            "paint": {
+                "circle-color": palette[i % n_class],
+                "circle-radius": circle_radius,
+            },
+            "filter": ["==", ["geometry-type"], "Point"],
+        }
+
+        layer_stroke = {
+            "id": f"{layer_name}_stroke",
+            "source": "source",
+            "source-layer": layer_name,
+            "type": "line",
+            "paint": {
+                "line-color": palette[i % n_class],
+                "line-width": line_width,
+            },
+            "filter": ["==", ["geometry-type"], "LineString"],
+        }
+
+        layer_fill = {
+            "id": f"{layer_name}_fill",
+            "source": "source",
+            "source-layer": layer_name,
+            "type": "fill",
+            "paint": {
+                "fill-color": palette[i % n_class],
+                "fill-opacity": opacity,
+            },
+            "filter": ["==", ["geometry-type"], "Polygon"],
+        }
+
+        style["layers"].extend([layer_point, layer_stroke, layer_fill])
+
+    return style
+
+
+def check_html_string(html_string):
+    """Check if an HTML string contains local images and convert them to base64.
+
+    Args:
+        html_string (str): The HTML string.
+
+    Returns:
+        str: The HTML string with local images converted to base64.
+    """
+    import re
+    import base64
+
+    # Search for img tags with src attribute
+    img_regex = r'<img[^>]+src\s*=\s*["\']([^"\':]+)["\'][^>]*>'
+
+    for match in re.findall(img_regex, html_string):
+        with open(match, "rb") as img_file:
+            img_data = img_file.read()
+            base64_data = base64.b64encode(img_data).decode("utf-8")
+            html_string = html_string.replace(
+                'src="{}"'.format(match),
+                'src="data:image/png;base64,' + base64_data + '"',
+            )
+
+    return html_string

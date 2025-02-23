@@ -4,17 +4,16 @@
 [![image](https://mybinder.org/badge_logo.svg)](https://gishub.org/geemap-binder)
 [![image](https://img.shields.io/pypi/v/geemap.svg)](https://pypi.python.org/pypi/geemap)
 [![image](https://img.shields.io/conda/vn/conda-forge/geemap.svg)](https://anaconda.org/conda-forge/geemap)
-[![image](https://pepy.tech/badge/geemap)](https://pepy.tech/project/geemap)
+[![image](https://static.pepy.tech/badge/geemap)](https://pepy.tech/project/geemap)
 [![image](https://readthedocs.org/projects/geemap/badge/?version=latest)](https://geemap.org/geemap)
 [![image](https://img.shields.io/badge/YouTube-GEE%20Tutorials-red)](https://gishub.org/geemap)
-[![image](https://img.shields.io/twitter/follow/giswqs?style=social)](https://twitter.com/giswqs)
 [![image](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## YouTube Channel
 
-More video tutorials for geemap and Earth Engine are available on my [YouTube channel](https://www.youtube.com/c/QiushengWu). If you can't access YouTube in your country, you can try [西瓜视频](http://gishub.org/xigua) or [哔哩哔哩](https://space.bilibili.com/527404442)。
+More video tutorials for geemap and Earth Engine are available on my [YouTube channel](https://youtube.com/@giswqs). If you can't access YouTube in your country, you can try [西瓜视频](http://gishub.org/xigua) or [哔哩哔哩](https://space.bilibili.com/527404442)。
 
-[![Earth Engine Tutorials on YouTube](https://wetlands.io/file/images/youtube.png)](https://www.youtube.com/c/QiushengWu)
+[![Earth Engine Tutorials on YouTube](https://wetlands.io/file/images/youtube2024.jpeg)](https://youtube.com/@giswqs)
 
 ## Tutorials
 
@@ -136,7 +135,39 @@ More video tutorials for geemap and Earth Engine are available on my [YouTube ch
 116. Creating global land cover timeseries ([notebook](https://geemap.org/notebooks/116_land_cover_timeseries))
 117. Creating a fishnet based on an input vector dataset ([notebook](https://geemap.org/notebooks/117_fishnet))
 118. Downloading images directly to a local computer ([notebook](https://geemap.org/notebooks/118_download_image))
-119. Plotting raster data in 3D without only one line of code ([notebook](https://geemap.org/notebooks/119_plot_raster))
+119. Plotting raster data in 3D with only one line of code ([notebook](https://geemap.org/notebooks/119_plot_raster))
+120. Calling functions in Earth Engine JavaScript libraries from Python ([notebook](https://geemap.org/notebooks/120_javascript))
+121. Styling vector data based on attributes ([notebook](https://geemap.org/notebooks/121_vector_style))
+122. LiDAR data analysis and visualization with whitebox and geemap ([notebook](https://geemap.org/notebooks/122_lidar))
+123. Creating Sentinel-1 SAR imagery timelapse ([notebook](https://geemap.org/notebooks/123_sentinel1_timelapse))
+124. Searching for awesome GEE community datasets ([notebook](https://geemap.org/notebooks/124_more_datasets))
+125. Using Earth Engine datasets example code ([notebook](https://geemap.org/notebooks/125_example_code))
+126. Using the improved Inspector GUI ([notebook](https://geemap.org/notebooks/126_inspector))
+127. Creating multiple legends and add them to the map ([notebook](https://geemap.org/notebooks/127_create_legend))
+128. Adding text, images, HTML, and widgets to the map ([notebook](https://geemap.org/notebooks/128_add_widget))
+129. Creating animated GIF from vector data with only one line of code ([notebook](https://geemap.org/notebooks/129_vector_to_gif))
+130. Printing Earth Engine objects without using the getInfo() function ([notebook](https://geemap.org/notebooks/130_print_objects))
+131. Using Earth Engine with ArcGIS Pro ([notebook](https://geemap.org/notebooks/131_arcgis))
+132. Adding colorbars to a folium map ([notebook](https://geemap.org/notebooks/132_folium_colorbar))
+133. Developing interactive web apps with gradio and geemap ([notebook](https://geemap.org/notebooks/133_gradio))
+134. Downloading Earth Engine map tiles as a GeoTIFF ([notebook](https://geemap.org/notebooks/134_ee_to_geotiff))
+135. Earth Engine Image Segmentation with the Segment Anything Model ([notebook](https://geemap.org/notebooks/135_segmentation))
+136. Downloading Earth Engine images in parallel ([notebook](https://geemap.org/notebooks/136_download_parallel))
+137. Creating a rectangular grid covering a region of interest for computing zonal statistics ([notebook](https://geemap.org/notebooks/137_create_grid))
+138. Clipping Earth Engine images interactively with the Draw Control ([notebook](https://geemap.org/notebooks/138_draw_control))
+139. Converting an Earth Engine to an image ([notebook](https://geemap.org/notebooks/139_layer_to_image))
+140. Converting Earth Engine images to an Xarray Dataset ([notebook](https://geemap.org/notebooks/140_ee_to_xarray))
+141. Visualizing in-memory raster datasets and image arrays ([notebook](https://geemap.org/notebooks/141_image_array_viz))
+142. Using Google Maps as basemaps ([notebook](https://geemap.org/notebooks/142_google_maps))
+143. Timeseries animation for precipitation dataset ([notebook](https://geemap.org/notebooks/143_precipitation_timelapse) | [video](https://youtu.be/CWwDVn2Mi6M))
+144. Feature and FeatureCollection Charts ([notebook](https://geemap.org/notebooks/144_chart_features))
+145. Image Charts ([notebook](https://geemap.org/notebooks/145_chart_image))
+146. ImageCollection Charts ([notebook](https://geemap.org/notebooks/146_chart_image_collection))
+147. Array and List Charts ([notebook](https://geemap.org/notebooks/147_chart_array_list))
+148. DataTable Charts ([notebook](https://geemap.org/notebooks/148_chart_data_table))
+149. Using Gemini and EE Genie for automatic code generation ([notebook](https://geemap.org/notebooks/149_gemini))
+150. Visualizing Earth Engine data in 3D with MapLibre ([notebook](https://geemap.org/notebooks/150_maplibre))
+151. Earth Engine Dataset Explorer ([notebook](https://geemap.org/notebooks/151_dataset_explorer))
 
 ### 1. Introducing the geemap Python package for interactive mapping with Google Earth Engine
 

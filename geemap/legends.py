@@ -1,5 +1,9 @@
-"""Module of sample legends for some commonly used geospatial datasets.
-"""
+"""Module of sample legends for some commonly used geospatial datasets."""
+
+# *******************************************************************************#
+# This module contains extra features of the geemap package.                     #
+# The geemap community will maintain the extra features.                         #
+# *******************************************************************************#
 
 import os
 
@@ -13,7 +17,7 @@ builtin_legends = {
         "21 Developed, Open Space": "dec5c5",
         "22 Developed, Low Intensity": "d99282",
         "23 Developed, Medium Intensity": "eb0000",
-        "24 Developed High Intensity": "ab0000",
+        "24 Developed, High Intensity": "ab0000",
         "31 Barren Land (Rock/Sand/Clay)": "b3ac9f",
         "41 Deciduous Forest": "68ab5f",
         "42 Evergreen Forest": "1c5f2c",
@@ -55,6 +59,18 @@ builtin_legends = {
         "8 Bare Ground": "EDE9E4",
         "9 Snow/Ice": "F2FAFF",
         "10 Clouds": "C8C8C8",
+    },
+    # https://samapriya.github.io/awesome-gee-community-datasets/projects/S2TSLULC/
+    "ESRI_LandCover_TS": {
+        "1 Water": "1A5BAB",
+        "2 Trees": "358221",
+        "4 Flooded Vegetation": "87D19E",
+        "5 Crops": "FFDB5C",
+        "7 Built Area": "ED022A",
+        "8 Bare Ground": "EDE9E4",
+        "9 Snow/Ice": "F2FAFF",
+        "10 Clouds": "C8C8C8",
+        "11 Rangeland": "C6AD8D",
     },
     "Dynamic_World": {
         "0 Water": "419BDF",
@@ -476,8 +492,6 @@ def ee_table_to_legend(in_table, out_file):
         in_table (str): The input file path (*.txt) to the Earth Engine color table.
         out_file (str): The output file path (*.txt) to the legend dictionary.
     """
-    # pkg_dir = os.path.dirname(pkg_resources.resource_filename("geemap", "geemap.py"))
-    # ee_legend_table = os.path.join(pkg_dir, "data/template/ee_legend_table.txt")
 
     if not os.path.exists(in_table):
         print("The class table does not exist.")

@@ -1,10 +1,12 @@
 import box
 import os
-import pkg_resources
+import importlib.resources
 
-_pkg_dir = os.path.dirname(pkg_resources.resource_filename("geemap", "geemap.py"))
+_pkg_dir = str(importlib.resources.files("geemap").joinpath("geemap.py").parent)
 _datasets_path = os.path.join(_pkg_dir, "examples/datasets.txt")
-_baseurl = "https://raw.githubusercontent.com/giswqs/geemap/master/examples/data/"
+_baseurl = (
+    "https://raw.githubusercontent.com/gee-community/geemap/master/examples/data/"
+)
 
 with open(_datasets_path) as f:
     _names = [line.strip() for line in f.readlines()]
@@ -31,6 +33,19 @@ def get_path(name):
         raise ValueError(
             f"{name} not found in example datasets. It must be one of {list(datasets.keys())}"
         )
+
+
+def get_ee_path(name):
+    """Get the Earth Engine asset ID of an example dataset.
+
+    Args:
+        name (str): The name of the dataset, such as contents, countries, us_cities, us_states,
+            china, CONUS_HU8, chn_admin_level0, chn_admin_level1, chn_admin_level2, chn_admin_line
+
+    Returns:
+        str: The Earth Engine asset ID of the dataset.
+    """
+    return f"{'users/giswqs/public/'}{name}"
 
 
 def get_names():

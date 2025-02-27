@@ -1,7 +1,15 @@
+"""Module for creating interactive maps with plotly."""
+
+# *******************************************************************************#
+# This module contains extra features of the geemap package.                     #
+# The geemap community will maintain the extra features.                         #
+# *******************************************************************************#
+
 import os
 import numpy as np
 import pandas as pd
 import ipywidgets as widgets
+
 from .basemaps import xyz_to_plotly
 from .common import *
 from .osm import *
@@ -62,8 +70,8 @@ class Canvas:
 
     def toolbar_reset(self):
         """Reset the toolbar so that no tool is selected."""
-        if hasattr(self, "toolbar"):
-            toolbar_grid = self.toolbar
+        if hasattr(self, "_toolbar"):
+            toolbar_grid = self._toolbar
             for tool in toolbar_grid.children:
                 tool.value = False
 
@@ -463,12 +471,21 @@ class Map(go.FigureWidget):
         elif isinstance(ee_object, ee.imagecollection.ImageCollection):
             image = ee_object.mosaic()
 
-        if "palette" in vis_params and isinstance(vis_params["palette"], Box):
-            try:
-                vis_params["palette"] = vis_params["palette"]["default"]
-            except Exception as e:
-                print("The provided palette is invalid.")
-                raise Exception(e)
+        if "palette" in vis_params:
+            if isinstance(vis_params["palette"], tuple):
+                vis_params["palette"] = list(vis_params["palette"])
+            if isinstance(vis_params["palette"], Box):
+                try:
+                    vis_params["palette"] = vis_params["palette"]["default"]
+                except Exception as e:
+                    print("The provided palette is invalid.")
+                    raise Exception(e)
+            elif isinstance(vis_params["palette"], str):
+                vis_params["palette"] = check_cmap(vis_params["palette"])
+            elif not isinstance(vis_params["palette"], list):
+                raise ValueError(
+                    "The palette must be a list of colors or a string or a Box object."
+                )
 
         map_id_dict = ee.Image(image).getMapId(vis_params)
         url = map_id_dict["tile_fetcher"].url_format
@@ -486,13 +503,13 @@ class Map(go.FigureWidget):
         attribution="",
         opacity=1.0,
         bands=None,
-        titiler_endpoint="https://titiler.xyz",
+        titiler_endpoint=None,
         **kwargs,
     ):
         """Adds a COG TileLayer to the map.
 
         Args:
-            url (str): The URL of the COG tile layer, e.g., 'https://opendata.digitalglobe.com/events/california-fire-2020/pre-event/2018-02-16/pine-gulch-fire20/1030010076004E00.tif'
+            url (str): The URL of the COG tile layer, e.g., 'https://github.com/opengeos/data/releases/download/raster/Libya-2023-07-01.tif'
             name (str, optional): The layer name to use for the layer. Defaults to 'Untitled'.
             attribution (str, optional): The attribution to use. Defaults to ''.
             opacity (float, optional): The opacity of the layer. Defaults to 1.
@@ -700,7 +717,7 @@ class Map(go.FigureWidget):
             **kwargs,
         )
 
-        self.add_basemap("Stamen.Terrain")
+        self.add_basemap("Esri.WorldTopoMap")
         self.add_trace(heatmap)
 
     def add_gdf(

@@ -2,7 +2,7 @@
 
 __author__ = """Qiusheng Wu"""
 __email__ = "giswqs@gmail.com"
-__version__ = "0.14.3"
+__version__ = "0.35.1"
 
 import os
 
@@ -25,14 +25,38 @@ def use_folium():
         return False
 
 
+def _use_eerepr(token="USE_EEREPR"):
+    """Whether to use eerepr for printing Earth Engine objects.
+
+    Returns:
+        bool: True if eerepr is used for printing Earth Engine objects.
+    """
+
+    if os.environ.get(token) is None:
+        return True
+    else:
+        return False
+
+
 if use_folium():
     from .foliumap import *
 else:
-    from .geemap import *
+    try:
+        from .geemap import *
+    except Exception as e:
+        if in_colab_shell():
+            print(
+                "Please restart Colab runtime after installation if you encounter any errors when importing geemap."
+            )
+        else:
+            print(
+                "Please restart Jupyter kernel after installation if you encounter any errors when importing geemap."
+            )
+        raise e
 
-    if in_colab_shell():
-        from google.colab import output
+if _use_eerepr():
+    import eerepr
 
-        output.enable_custom_widget_manager()
+    eerepr.initialize()
 
 from .report import Report

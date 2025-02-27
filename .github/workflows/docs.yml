@@ -1,40 +1,52 @@
 name: docs
+
 on:
     push:
         branches:
             - master
+
 jobs:
     deploy:
         runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                python-version: ["3.12"]
+
+        env:
+            USE_MKDOCS: ${{ secrets.USE_MKDOCS }}
+
         steps:
-            - uses: actions/checkout@v2
-            - uses: actions/setup-python@v2
+            - uses: actions/checkout@v4
               with:
-                  python-version: 3.9
-            - name: Install GDAL
-              run: |
-                  python -m pip install --upgrade pip
-                  pip install --find-links=https://girder.github.io/large_image_wheels --no-cache GDAL
-            - name: Test GDAL installation
-              run: |
-                  python -c "from osgeo import gdal"
-                  gdalinfo --version
+                  fetch-depth: 0
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@v5
+              with:
+                  version: "0.4.16"
+                  # enable-cache: true
+
+            - name: Set up Python ${{ matrix.python-version }}
+              run: uv python install ${{ matrix.python-version }}
+
             - name: Install dependencies
+              run: uv sync --python ${{ matrix.python-version }}
+
+            - name: Install optional dependencies
               run: |
-                  python -m pip install --upgrade pip
-                  pip install --user --no-cache-dir Cython
-                  pip install codespell -r requirements.txt -r requirements_dev.txt
-                  pip install .
-            - name: Discover typos with codespell
-              run: codespell --skip="*.csv,*.geojson" --ignore-words-list="aci,acount,acounts,fallow,hart,hist,nd,ned,ois,wqs,watermask"
-            - name: LOAD EE CREDENTIALS
-              run: python ./.github/ee_token.py
-              env:
-                  EARTHENGINE_TOKEN: ${{ secrets.EARTHENGINE_TOKEN }}
-            - name: GEEMAP-TEST
+                  uv cache clean
+                  uv pip install --find-links https://girder.github.io/large_image_wheels GDAL pyproj
+                  uv pip install -r pyproject.toml --extra all
+            - name: Test import
               run: |
-                  python -m unittest discover tests/
-            - run: pip install -r requirements_docs.txt
-            - run: mkdocs gh-deploy --force
-              env:
-                  USE_FOLIUM: ${{ secrets.USE_FOLIUM }}
+                  uv run python -c "import geemap; print('geemap import successful')"
+                  uv run python -c "from osgeo import gdal; print('gdal import successful')"
+                  uv run gdalinfo --version
+
+            - name: Running tests
+              run: |
+                  uv run python -m unittest discover tests/
+            - name: Install mkdocs
+              run: |
+                  uv pip install -r requirements_docs.txt
+                  uv run mkdocs gh-deploy --force

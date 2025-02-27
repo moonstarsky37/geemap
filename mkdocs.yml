@@ -1,15 +1,31 @@
 site_name: geemap
-
+site_description: A Python package for interactive mapping with Google Earth Engine
+site_author: Qiusheng Wu
 site_url: https://geemap.org
 
-repo_url: https://github.com/giswqs/geemap
+repo_url: https://github.com/gee-community/geemap
+
+copyright: "Copyright &copy; 2020 - 2024 Qiusheng Wu"
 
 theme:
     palette:
-        scheme: preference
+        - scheme: default
+          #   primary: blue
+          #   accent: indigo
+          toggle:
+              icon: material/toggle-switch-off-outline
+              name: Switch to dark mode
+        - scheme: slate
+          primary: indigo
+          accent: indigo
+          toggle:
+              icon: material/toggle-switch
+              name: Switch to light mode
     name: material
     icon:
         repo: fontawesome/brands/github
+    logo: assets/logo.png
+    favicon: assets/favicon.png
     features:
         - navigation.instant
         - navigation.tracking
@@ -17,19 +33,35 @@ theme:
         - search.highlight
         - search.share
     custom_dir: "docs/overrides"
+    font:
+        text: Google Sans
+        code: Regular
 
 plugins:
     - search
     - mkdocstrings
     - git-revision-date
+    - git-revision-date-localized:
+          enable_creation_date: true
+          type: timeago
     # - pdf-export
     - mkdocs-jupyter:
           include_source: True
           ignore_h1_titles: True
-          #   execute: True
+          allow_errors: false
+          ignore: ["conf.py"]
+          execute: False
+          execute_ignore:
+              ["notebooks/*.ipynb", "workshops/*.ipynb", "changelog_update.py"]
 
 markdown_extensions:
+    - admonition
+    - abbr
     - attr_list
+    - def_list
+    - footnotes
+    - meta
+    - md_in_html
     - pymdownx.superfences
     - pymdownx.highlight:
           linenums: true
@@ -37,12 +69,25 @@ markdown_extensions:
           permalink: true
 
 extra:
+    social:
+        - icon: fontawesome/brands/github
+          link: https://github.com/giswqs
+        - icon: fontawesome/brands/medium
+          link: https://medium.com/@giswqs
+        - icon: fontawesome/brands/twitter
+          link: https://twitter.com/giswqs
+        - icon: fontawesome/brands/linkedin
+          link: https://www.linkedin.com/in/giswqs
+        - icon: fontawesome/brands/youtube
+          link: https://youtube.com/@giswqs
     analytics:
         provider: google
-        property: UA-186406134-1
+        property: G-H322CB6ZEC
 
 nav:
     - Home: index.md
+    # - Search: search_bk.md
+    - Book: https://book.geemap.org
     - Installation: installation.md
     - Get Started: get-started.md
     - Usage: usage.md
@@ -53,35 +98,66 @@ nav:
     - Citations: citations.md
     - FAQ: faq.md
     - Changelog: changelog.md
-    - Streamlit Web App: https://streamlit.geemap.org
-    - Blog: https://blog.gishub.org
-    - YouTube Channel: https://www.youtube.com/c/QiushengWu
-    - Report Issues: https://github.com/giswqs/geemap/issues
+    - YouTube Channel: https://youtube.com/@giswqs
+    - Report Issues: https://github.com/gee-community/geemap/issues
     - API Reference:
+          - ai module: ai.md
           - basemaps module: basemaps.md
           - cartoee module: cartoee.md
           - chart module: chart.md
           - colormaps module: colormaps.md
           - common module: common.md
           - conversion module: conversion.md
+          - core module: core.md
+          - coreutils module: coreutils.md
           - datasets module: datasets.md
           - deck module: deck.md
+          - ee_tile_layers module: ee_tile_layers.md
           - examples module: examples.md
           - foliumap module: foliumap.md
           - geemap module: geemap.md
-          - heremap module: heremap.md
           - kepler module: kepler.md
           - legends module: legends.md
+          - map_widgets module: map_widgets.md
+          - maplibregl module: maplibregl.md
           - ml module: ml.md
           - osm module: osm.md
+          - plot module: plot.md
           - plotlymap module: plotlymap.md
+          - report module: report.md
           - timelapse module: timelapse.md
           - toolbar module: toolbar.md
     - Workshops:
           - workshops/GeoPython_2021.ipynb
           - workshops/GEE_Workshop_2021.ipynb
           - workshops/SRM_Workshop_2022.ipynb
+          - workshops/Crop_Mapping_2022.ipynb
+          - workshops/Japan_2022.ipynb
+          - workshops/GEE_Workshop_2022_Part1.ipynb
+          - workshops/GEE_Workshop_2022_Part2.ipynb
+          - workshops/AmericaView_2023.ipynb
+          - workshops/SciPy_2023.ipynb
+          - workshops/City_Plus_2023.ipynb
+          - workshops/G4G_2023.ipynb
+          - workshops/NCSU_2023.ipynb
+          - workshops/AGU_2023.ipynb
+          - workshops/Alaska_2024_Part1.ipynb
+          - workshops/Alaska_2024_Part2.ipynb
+          - workshops/Alaska_2024_Part3.ipynb
+          - workshops/GEE_Workshop_2024.ipynb
+          - workshops/TNGIC_2024.ipynb
+          - workshops/IGIC_2024.ipynb
+          - workshops/SciPy_2024.ipynb
+          - workshops/SatMOC_2024.ipynb
+          - workshops/GeoAI_2024.ipynb
+          - workshops/Taiwan_2024.ipynb
+          - workshops/FOSS4GNA_2024.ipynb
+          - workshops/IPPN_2024.ipynb
+          - workshops/HGAC_2024.ipynb
+          - workshops/AGU_2024.ipynb
     - Notebooks:
+          - notebooks/00_ee_auth_colab.ipynb
+          - notebooks/00_geemap_colab.ipynb
           - notebooks/00_geemap_key_features.ipynb
           - notebooks/01_geemap_intro.ipynb
           - notebooks/02_using_basemaps.ipynb
@@ -202,46 +278,79 @@ nav:
           - notebooks/117_fishnet.ipynb
           - notebooks/118_download_image.ipynb
           - notebooks/119_plot_raster.ipynb
-          - miscellaneous:
-                - notebooks/cartoee_colab.ipynb
-                - notebooks/cartoee_colorbar.ipynb
-                - notebooks/cartoee_projections.ipynb
-                - notebooks/cartoee_quickstart.ipynb
-                - notebooks/cartoee_scalebar.ipynb
-                - notebooks/cartoee_subplots.ipynb
-                - notebooks/file_browser.ipynb
-                - notebooks/geemap_and_earthengine.ipynb
-                - notebooks/geemap_and_folium.ipynb
-                - notebooks/geemap_and_ipyleaflet.ipynb
-                - notebooks/geemap_and_ipywidgets.ipynb
-                - notebooks/geemap_colab.ipynb
-                - notebooks/geemap_matplotlib.ipynb
-                - notebooks/geopandas.ipynb
-                - notebooks/image_overlay.ipynb
-                - notebooks/ipyleaflet_draw_control.ipynb
-                - notebooks/ipyleaflet_tutorials.ipynb
-                - notebooks/ipywidgets_demo.ipynb
-                - notebooks/kml_kmz.ipynb
-                - notebooks/local_rf_training.ipynb
-                - notebooks/mouse_click_coordinates.ipynb
-                - notebooks/netcdf.ipynb
-                - notebooks/numpy_to_ee.ipynb
-                - notebooks/nlcd_app.ipynb
-                - notebooks/nlcd_datapane.ipynb
-                - notebooks/notebook_template.ipynb
-                - notebooks/oil_palm_and_rubber_plantation.ipynb
-                - notebooks/otsu.ipynb
-                - notebooks/qgis_layer_style_file.ipynb
-                - notebooks/random_sampling.ipynb
-                - notebooks/river_width.ipynb
-                - notebooks/select_features.ipynb
-                - notebooks/select_features_old.ipynb
-                - notebooks/surface_water_mapping.ipynb
-                - notebooks/template.ipynb
-                - notebooks/tn_surface_water.ipynb
-                - notebooks/us_census_data.ipynb
-                - notebooks/usda_naip_imagery.ipynb
-                - notebooks/velocity.ipynb
-                - notebooks/video_overlay.ipynb
-                - notebooks/water_app.ipynb
-                - notebooks/world_pop_density.ipynb
+          - notebooks/120_javascript.ipynb
+          - notebooks/121_vector_style.ipynb
+          - notebooks/122_lidar.ipynb
+          - notebooks/123_sentinel1_timelapse.ipynb
+          - notebooks/124_more_datasets.ipynb
+          - notebooks/125_example_code.ipynb
+          - notebooks/126_inspector.ipynb
+          - notebooks/127_create_legend.ipynb
+          - notebooks/128_add_widget.ipynb
+          - notebooks/129_vector_to_gif.ipynb
+          - notebooks/130_print_objects.ipynb
+          - notebooks/131_arcgis.ipynb
+          - notebooks/132_folium_colorbar.ipynb
+          - notebooks/133_gradio.ipynb
+          - notebooks/134_ee_to_geotiff.ipynb
+          - notebooks/135_segmentation.ipynb
+          - notebooks/136_download_parallel.ipynb
+          - notebooks/137_create_grid.ipynb
+          - notebooks/138_draw_control.ipynb
+          - notebooks/139_layer_to_image.ipynb
+          - notebooks/140_ee_to_xarray.ipynb
+          - notebooks/141_image_array_viz.ipynb
+          - notebooks/142_google_maps.ipynb
+          - notebooks/143_precipitation_timelapse.ipynb
+          - notebooks/144_chart_features.ipynb
+          - notebooks/145_chart_image.ipynb
+          - notebooks/146_chart_image_collection.ipynb
+          - notebooks/147_chart_array_list.ipynb
+          - notebooks/148_chart_data_table.ipynb
+          - notebooks/149_gemini.ipynb
+          - notebooks/150_maplibre.ipynb
+          - notebooks/151_dataset_explorer.ipynb
+    #   - miscellaneous:
+    #         - notebooks/cartoee_colab.ipynb
+    #         - notebooks/cartoee_colorbar.ipynb
+    #         - notebooks/cartoee_projections.ipynb
+    #         - notebooks/cartoee_quickstart.ipynb
+    #         - notebooks/cartoee_scalebar.ipynb
+    #         - notebooks/cartoee_subplots.ipynb
+    #         - notebooks/file_browser.ipynb
+    #         - notebooks/geemap_and_earthengine.ipynb
+    #         - notebooks/geemap_and_folium.ipynb
+    #         - notebooks/geemap_and_ipyleaflet.ipynb
+    #         - notebooks/geemap_and_ipywidgets.ipynb
+    #         - notebooks/geemap_colab.ipynb
+    #         - notebooks/geemap_matplotlib.ipynb
+    #         - notebooks/geopandas.ipynb
+    #         - notebooks/image_overlay.ipynb
+    #         - notebooks/ipyleaflet_draw_control.ipynb
+    #         - notebooks/ipyleaflet_tutorials.ipynb
+    #         - notebooks/ipywidgets_demo.ipynb
+    #         - notebooks/kml_kmz.ipynb
+    #         - notebooks/local_rf_training.ipynb
+    #         - notebooks/mouse_click_coordinates.ipynb
+    #         - notebooks/netcdf.ipynb
+    #         - notebooks/numpy_to_ee.ipynb
+    #         - notebooks/nlcd_app.ipynb
+    #         - notebooks/nlcd_datapane.ipynb
+    #         - notebooks/notebook_template.ipynb
+    #         - notebooks/oil_palm_and_rubber_plantation.ipynb
+    #         - notebooks/otsu.ipynb
+    #         - notebooks/qgis_layer_style_file.ipynb
+    #         - notebooks/random_sampling.ipynb
+    #         - notebooks/river_width.ipynb
+    #         - notebooks/select_features.ipynb
+    #         - notebooks/select_features_old.ipynb
+    #         - notebooks/sentinel1_timelapse.ipynb
+    #         - notebooks/surface_water_mapping.ipynb
+    #         - notebooks/template.ipynb
+    #         - notebooks/tn_surface_water.ipynb
+    #         - notebooks/us_census_data.ipynb
+    #         - notebooks/usda_naip_imagery.ipynb
+    #         - notebooks/velocity.ipynb
+    #         - notebooks/video_overlay.ipynb
+    #         - notebooks/water_app.ipynb
+    #         - notebooks/world_pop_density.ipynb
